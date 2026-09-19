@@ -1,0 +1,6 @@
+{
+  "name": "Lopri AI",
+  "description": "Cross-check electrical drawings against project specifications to identify potential scope conflicts, omissions, and requirements.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
