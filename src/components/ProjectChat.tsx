@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import { Project, ChatMessage } from '../types';
+import { apiClient } from '../services/apiClient';
 import { 
   Send, 
   Sparkles, 
@@ -56,25 +57,7 @@ export const ProjectChat: React.FC<ProjectChatProps> = ({
     setIsLoading(true);
 
     try {
-      const res = await fetch(`/api/projects/${project.id}/chat`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ question: q }),
-      });
-
-      if (!res.ok) {
-        throw new Error('Failed to get answer');
-      }
-
-      const data = await res.json();
-      const assistantMsg: ChatMessage = {
-        id: 'msg-' + Date.now() + 1,
-        role: 'assistant',
-        content: data.content || data.answer || 'No corresponding information found in the uploaded documents.',
-        citations: data.citations || [],
-        timestamp: new Date().toISOString(),
-      };
-
+      const assistantMsg = await apiClient.chatWithProject(project.id, q);
       setMessages((prev) => [...prev, assistantMsg]);
     } catch (err) {
       const errorMsg: ChatMessage = {

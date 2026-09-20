@@ -6,6 +6,7 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { Project, Finding, FindingStatus, ChatMessage, ProjectDocument } from './types';
 import { EMPTY_PROJECT } from './demoData';
+import { apiClient } from './services/apiClient';
 import { StudioHeader } from './components/StudioHeader';
 import { StudioSidebar } from './components/StudioSidebar';
 import { StudioBuildHome } from './components/StudioBuildHome';
@@ -47,18 +48,20 @@ export default function App() {
   // Fetch project list on load
   const loadProjects = useCallback(async () => {
     try {
-      const res = await fetch('/api/projects');
-      if (res.ok) {
-        const list = await res.json();
-        setAllProjects(list);
-        if (list.length > 0) {
-          setProject((current) => {
-            if (!current.id || !list.some((p: any) => p.id === current.id)) {
-              loadProject(list[0].id);
-            }
-            return current;
-          });
-        }
+      const list = await apiClient.getProjects();
+      if (list && list.length > 0) {
+        setAllProjects(list.map((p) => ({
+          id: p.id,
+          name: p.name,
+          status: p.status,
+          findingsCount: p.findings.length,
+        })));
+        setProject((current) => {
+          if (!current.id || !list.some((p: any) => p.id === current.id)) {
+            loadProject(list[0].id);
+          }
+          return current;
+        });
       }
     } catch (err) {
       console.warn('Could not fetch projects list:', err);
@@ -72,9 +75,8 @@ export default function App() {
   // Fetch specific project
   const loadProject = async (projectId: string) => {
     try {
-      const res = await fetch(`/api/projects/${projectId}`);
-      if (res.ok) {
-        const data: Project = await res.json();
+      const data = await apiClient.getProject(projectId);
+      if (data) {
         setProject(data);
         if (data.findings.length > 0) {
           setSelectedFindingId(data.findings[0].id);
@@ -101,11 +103,7 @@ export default function App() {
     }));
 
     try {
-      await fetch(`/api/projects/${project.id}/findings/${findingId}`, {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ status: newStatus }),
-      });
+      await apiClient.updateFindingStatus(project.id, findingId, newStatus);
     } catch (err) {
       console.error('Failed to sync finding status:', err);
     }
@@ -124,11 +122,7 @@ export default function App() {
     }));
 
     try {
-      await fetch(`/api/projects/${project.id}/findings/${findingId}`, {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ estimatorNotes: notes }),
-      });
+      await apiClient.updateFindingNotes(project.id, findingId, notes);
     } catch (err) {
       console.error('Failed to sync estimator notes:', err);
     }
@@ -136,7 +130,7 @@ export default function App() {
 
   const handleResetDemo = async () => {
     try {
-      await fetch('/api/projects/reset-demo', { method: 'POST' });
+      await apiClient.resetWorkspace();
     } catch (err) {
       console.warn('Reset error:', err);
     }
@@ -154,14 +148,11 @@ export default function App() {
     }
     setIsAnalyzing(true);
     try {
-      const res = await fetch(`/api/projects/${project.id}/analyze`, { method: 'POST' });
-      if (res.ok) {
-        const data = await res.json();
-        if (data.project) {
-          setProject(data.project);
-          if (data.project.findings.length > 0) {
-            setSelectedFindingId(data.project.findings[0].id);
-          }
+      const analyzedProject = await apiClient.analyzeProject(project.id);
+      if (analyzedProject) {
+        setProject(analyzedProject);
+        if (analyzedProject.findings.length > 0) {
+          setSelectedFindingId(analyzedProject.findings[0].id);
         }
       }
     } catch (err) {
@@ -198,25 +189,7 @@ export default function App() {
     setIsChatLoading(true);
 
     try {
-      const res = await fetch(`/api/projects/${project.id}/chat`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ question: query }),
-      });
-
-      if (!res.ok) {
-        throw new Error('Failed to run prompt inquiry');
-      }
-
-      const data = await res.json();
-      const assistantMsg: ChatMessage = {
-        id: 'msg-' + (Date.now() + 1),
-        role: 'assistant',
-        content: data.content || data.answer || 'No corresponding information found in the project documents.',
-        citations: data.citations || [],
-        timestamp: new Date().toISOString(),
-      };
-
+      const assistantMsg = await apiClient.chatWithProject(project.id, query);
       setChatMessages((prev) => [...prev, assistantMsg]);
     } catch (err) {
       const errorMsg: ChatMessage = {

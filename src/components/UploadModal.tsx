@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import { Project } from '../types';
+import { apiClient } from '../services/apiClient';
 import { 
   Upload, 
   X, 
@@ -24,15 +25,42 @@ export const UploadModal: React.FC<UploadModalProps> = ({
 }) => {
   const [projectName, setProjectName] = useState('');
   const [selectedFiles, setSelectedFiles] = useState<File[]>([]);
+  const [categories, setCategories] = useState<Record<string, 'drawing' | 'specification'>>({});
   const [isUploading, setIsUploading] = useState(false);
   const [uploadError, setUploadError] = useState<string | null>(null);
 
   if (!isOpen) return null;
 
+  const isLikelyDrawing = (name: string) => {
+    return /E\d|drawing|plan|schematic|dwg|single-line|schedule|sheet/i.test(name);
+  };
+
+  const updateFilesWithCategories = (newFiles: File[]) => {
+    setSelectedFiles((prev) => {
+      const combined = [...prev, ...newFiles];
+      setCategories((prevCats) => {
+        const nextCats = { ...prevCats };
+        combined.forEach((file, index) => {
+          if (!nextCats[file.name]) {
+            if (isLikelyDrawing(file.name)) {
+              nextCats[file.name] = 'drawing';
+            } else if (combined.length >= 2 && index === 0) {
+              nextCats[file.name] = 'drawing';
+            } else {
+              nextCats[file.name] = 'specification';
+            }
+          }
+        });
+        return nextCats;
+      });
+      return combined;
+    });
+  };
+
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     if (e.target.files) {
       const newFiles = (Array.from(e.target.files) as File[]).filter(f => f.name.toLowerCase().endsWith('.pdf'));
-      setSelectedFiles((prev) => [...prev, ...newFiles]);
+      updateFilesWithCategories(newFiles);
     }
   };
 
@@ -40,7 +68,7 @@ export const UploadModal: React.FC<UploadModalProps> = ({
     e.preventDefault();
     if (e.dataTransfer.files) {
       const dropped = (Array.from(e.dataTransfer.files) as File[]).filter(f => f.name.toLowerCase().endsWith('.pdf'));
-      setSelectedFiles((prev) => [...prev, ...dropped]);
+      updateFilesWithCategories(dropped);
     }
   };
 
@@ -48,14 +76,17 @@ export const UploadModal: React.FC<UploadModalProps> = ({
     setSelectedFiles((prev) => prev.filter((_, i) => i !== index));
   };
 
-  const isLikelyDrawing = (name: string) => {
-    return /E\d|drawing|plan|schematic|dwg|single-line|schedule/i.test(name);
+  const toggleCategory = (fileName: string) => {
+    setCategories((prev) => ({
+      ...prev,
+      [fileName]: prev[fileName] === 'drawing' ? 'specification' : 'drawing',
+    }));
   };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (selectedFiles.length === 0) {
-      setUploadError('Please select at least one drawing PDF and one specification PDF.');
+      setUploadError('Please select at least one document PDF.');
       return;
     }
 
@@ -63,48 +94,27 @@ export const UploadModal: React.FC<UploadModalProps> = ({
     setUploadError(null);
 
     try {
-      // 1. Create project
-      const projRes = await fetch('/api/projects', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          name: projectName,
-          description: `Custom upload with ${selectedFiles.length} documents.`,
-        }),
-      });
+      // 1. Create project via resilient apiClient
+      const projectData = await apiClient.createProject(
+        projectName,
+        `Custom upload with ${selectedFiles.length} documents.`
+      );
 
-      if (!projRes.ok) {
-        throw new Error('Failed to create project');
-      }
-
-      const projectData = await projRes.json();
-
-      // 2. Upload documents
-      const formData = new FormData();
-      selectedFiles.forEach((file) => {
-        formData.append('files', file);
-      });
-
-      const uploadRes = await fetch(`/api/projects/${projectData.id}/documents`, {
-        method: 'POST',
-        body: formData,
-      });
-
-      if (!uploadRes.ok) {
-        const err = await uploadRes.json();
-        throw new Error(err.error || 'Upload failed');
-      }
+      // 2. Upload and extract documents
+      const uploadedProject = await apiClient.uploadDocuments(
+        projectData.id,
+        selectedFiles,
+        categories
+      );
 
       // 3. Trigger cross-check analysis
-      const analyzeRes = await fetch(`/api/projects/${projectData.id}/analyze`, {
-        method: 'POST',
-      });
-      const analyzeData = await analyzeRes.json();
+      const analyzedProject = await apiClient.analyzeProject(uploadedProject.id);
 
-      onUploadSuccess(analyzeData.project || projectData);
+      onUploadSuccess(analyzedProject);
       onClose();
     } catch (err: any) {
-      setUploadError(err.message || 'Error processing upload and analysis');
+      console.error('Upload & cross-check error:', err);
+      setUploadError(err.message || 'Error processing documents. Please try again.');
     } finally {
       setIsUploading(false);
     }
@@ -186,7 +196,8 @@ export const UploadModal: React.FC<UploadModalProps> = ({
                 Queued Documents ({selectedFiles.length})
               </div>
               {selectedFiles.map((file, idx) => {
-                const isDwg = isLikelyDrawing(file.name);
+                const currentCat = categories[file.name] || (isLikelyDrawing(file.name) ? 'drawing' : 'specification');
+                const isDwg = currentCat === 'drawing';
                 return (
                   <div
                     key={idx}
@@ -198,10 +209,19 @@ export const UploadModal: React.FC<UploadModalProps> = ({
                       ) : (
                         <FileText className="w-4 h-4 text-amber-600 shrink-0" />
                       )}
-                      <span className="truncate text-slate-800 font-medium">{file.name}</span>
-                      <span className="text-[10px] font-semibold px-2 py-0.5 rounded-full bg-white border border-slate-200 text-slate-600 shrink-0">
-                        {isDwg ? 'Drawing' : 'Specification'}
-                      </span>
+                      <span className="truncate text-slate-800 font-medium max-w-[160px] sm:max-w-[200px]">{file.name}</span>
+                      <button
+                        type="button"
+                        onClick={() => toggleCategory(file.name)}
+                        title="Click to switch category"
+                        className={`text-[10px] font-semibold px-2 py-0.5 rounded-full border transition-colors cursor-pointer shrink-0 ${
+                          isDwg 
+                            ? 'bg-sky-50 border-sky-200 text-sky-700 hover:bg-sky-100' 
+                            : 'bg-amber-50 border-amber-200 text-amber-700 hover:bg-amber-100'
+                        }`}
+                      >
+                        {isDwg ? '📐 Drawing' : '📋 Specification'}
+                      </button>
                     </div>
 
                     <button

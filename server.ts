@@ -127,10 +127,30 @@ const handleDocumentUpload = async (req: express.Request, res: express.Response)
   project.processingSteps[0].status = 'in_progress';
 
   try {
-    for (const file of files) {
+    let customCategories: Record<string, 'drawing' | 'specification'> = {};
+    try {
+      if (req.body.categories) {
+        customCategories = typeof req.body.categories === 'string' ? JSON.parse(req.body.categories) : req.body.categories;
+      }
+    } catch (e) {}
+
+    for (let i = 0; i < files.length; i++) {
+      const file = files[i];
       const originalName = file.originalname;
-      const isDrawing = /E\d|drawing|plan|schematic|dwg|single-line|schedule/i.test(originalName);
-      const category = isDrawing ? 'drawing' : 'specification';
+      let category: 'drawing' | 'specification';
+
+      if (customCategories[originalName]) {
+        category = customCategories[originalName];
+      } else {
+        const matchesDrawing = /E\d|drawing|plan|schematic|dwg|single-line|schedule|sheet/i.test(originalName);
+        if (files.length >= 2 && i === 0 && !matchesDrawing) {
+          category = 'drawing';
+        } else {
+          category = matchesDrawing ? 'drawing' : 'specification';
+        }
+      }
+
+      const isDrawing = category === 'drawing';
 
       let extractedText = '';
       let pageCount = 1;
@@ -226,12 +246,27 @@ app.post('/api/projects/:id/analyze', async (req, res) => {
     return res.status(404).json({ error: 'Project not found' });
   }
 
-  const drawings = project.documents.filter(d => d.category === 'drawing');
-  const specs = project.documents.filter(d => d.category === 'specification');
+  let drawings = project.documents.filter(d => d.category === 'drawing');
+  let specs = project.documents.filter(d => d.category === 'specification');
 
-  if (drawings.length === 0 || specs.length === 0) {
+  if (project.documents.length >= 2) {
+    if (drawings.length === 0) {
+      project.documents[0].category = 'drawing';
+      drawings = [project.documents[0]];
+      specs = project.documents.slice(1);
+    } else if (specs.length === 0) {
+      project.documents[project.documents.length - 1].category = 'specification';
+      specs = [project.documents[project.documents.length - 1]];
+      drawings = project.documents.slice(0, project.documents.length - 1);
+    }
+  } else if (project.documents.length === 1) {
+    drawings = [project.documents[0]];
+    specs = [project.documents[0]];
+  }
+
+  if (project.documents.length === 0) {
     return res.status(400).json({
-      error: 'Analysis requires at least one electrical drawing and at least one project specification document.',
+      error: 'Analysis requires at least one electrical document to be uploaded.',
     });
   }
 
@@ -735,7 +770,7 @@ USER QUESTION: "${question}"
 // ----------------------------------------------------
 // SERVER BOOT & VITE MIDDLEWARE
 // ----------------------------------------------------
-async function startServer() {
+export async function startServer() {
   if (process.env.NODE_ENV !== 'production') {
     const vite = await createViteServer({
       server: { middlewareMode: true },
@@ -755,4 +790,9 @@ async function startServer() {
   });
 }
 
-startServer();
+// In Vercel serverless environment, express app is exported
+export default app;
+
+if (process.env.VERCEL !== '1' && !process.env.AWS_LAMBDA_FUNCTION_NAME) {
+  startServer();
+}
