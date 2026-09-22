@@ -15,6 +15,7 @@ import { StudioInspector } from './components/StudioInspector';
 import { UploadModal } from './components/UploadModal';
 import { PipelineStatusModal } from './components/PipelineStatusModal';
 import { ExportSummaryModal } from './components/ExportSummaryModal';
+import { FeedbackButton } from './components/FeedbackButton';
 
 export default function App() {
   const [project, setProject] = useState<Project>(EMPTY_PROJECT);
@@ -360,6 +361,14 @@ export default function App() {
         onClose={() => setIsExportOpen(false)}
         project={project}
       />
+
+      {/* Floating Feedback Button (Always accessible on bottom corner for mobile / fast feedback) */}
+      <div className="fixed bottom-4 right-4 z-40 sm:hidden">
+        <FeedbackButton 
+          variant="default" 
+          className="bg-blue-600 text-white px-3.5 py-2 rounded-full font-semibold shadow-lg hover:bg-blue-700 transition-all active:scale-95 flex items-center gap-1.5 text-xs cursor-pointer border border-blue-400/30" 
+        />
+      </div>
     </div>
   );
 }

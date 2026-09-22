@@ -1,5 +1,6 @@
 import React from 'react';
 import { Project, Finding, FindingType, FindingStatus } from '../types';
+import { FeedbackButton } from './FeedbackButton';
 import { 
   Plus, 
   Terminal, 
@@ -242,6 +243,11 @@ export const StudioSidebar: React.FC<StudioSidebarProps> = ({
               ? 'All findings cite specific drawing sheets and Division 26 specification sections.'
               : 'Upload electrical drawing sheets and Division 26 specs to begin verification.'}
           </div>
+        </div>
+
+        {/* User Feedback (Tally Form) */}
+        <div className="px-1">
+          <FeedbackButton variant="sidebar" />
         </div>
 
         {/* Action icons row (Bell, Settings, Search, Upload) */}

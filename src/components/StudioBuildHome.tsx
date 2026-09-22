@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import { Project, Finding, FindingType, FindingStatus } from '../types';
+import { FeedbackButton } from './FeedbackButton';
 import { 
   Sparkles, 
   Plus, 
@@ -365,6 +366,20 @@ export const StudioBuildHome: React.FC<StudioBuildHomeProps> = ({
               })}
             </div>
           )}
+        </div>
+
+        {/* User Feedback Callout (Tally Integration) */}
+        <div className="w-full mt-8 p-4 rounded-xl border border-slate-200 bg-white shadow-2xs flex flex-col sm:flex-row items-center justify-between gap-4">
+          <div className="flex items-center gap-3 text-left">
+            <div className="w-9 h-9 rounded-lg bg-blue-50 text-blue-600 flex items-center justify-center text-lg shrink-0">
+              💡
+            </div>
+            <div>
+              <h4 className="text-xs font-bold text-slate-900">Give your feedback & suggestions</h4>
+              <p className="text-xs text-slate-500">Help us improve the Electrical Scope Checker for your estimators</p>
+            </div>
+          </div>
+          <FeedbackButton variant="default" />
         </div>
 
       </div>

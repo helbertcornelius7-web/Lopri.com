@@ -1,5 +1,6 @@
 import React from 'react';
 import { Project } from '../types';
+import { FeedbackButton } from './FeedbackButton';
 import { 
   PanelLeftClose, 
   PanelLeftOpen, 
@@ -178,6 +179,9 @@ export const StudioHeader: React.FC<StudioHeaderProps> = ({
           <Download className="w-3.5 h-3.5 text-slate-500" />
           <span>Export Log</span>
         </button>
+
+        {/* Feedback Button (Tally Widget) */}
+        <FeedbackButton variant="header" />
 
         {/* Clear Workspace */}
         <button
