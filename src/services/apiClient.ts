@@ -7,33 +7,43 @@ import {
   runClientSideCrossCheck 
 } from './clientScopeEngine';
 
+// Detect if running in static Vercel frontend or serverless environment without active Node server
+const isVercel = typeof window !== 'undefined' && (
+  window.location.hostname.includes('vercel.app') ||
+  window.location.hostname.includes('.vercel.')
+);
+
 // Unified API Client with Automatic Fallback for Vercel/Static Deployments
 export const apiClient = {
   // 1. Get all projects
   async getProjects(): Promise<Project[]> {
-    try {
-      const res = await fetch('/api/projects');
-      if (res.ok) {
-        const serverProjects = await res.json();
-        if (Array.isArray(serverProjects) && serverProjects.length > 0) {
-          return serverProjects;
+    if (!isVercel) {
+      try {
+        const res = await fetch('/api/projects');
+        if (res.ok) {
+          const serverProjects = await res.json();
+          if (Array.isArray(serverProjects) && serverProjects.length > 0) {
+            return serverProjects;
+          }
         }
+      } catch (err) {
+        console.warn('Backend /api/projects unreachable, reading from client store:', err);
       }
-    } catch (err) {
-      console.warn('Backend /api/projects unreachable, reading from client store:', err);
     }
     return getLocalProjects();
   },
 
   // 2. Get single project
   async getProject(projectId: string): Promise<Project | null> {
-    try {
-      const res = await fetch(`/api/projects/${projectId}`);
-      if (res.ok) {
-        return await res.json();
+    if (!isVercel) {
+      try {
+        const res = await fetch(`/api/projects/${projectId}`);
+        if (res.ok) {
+          return await res.json();
+        }
+      } catch (err) {
+        console.warn(`Backend /api/projects/${projectId} error, using client store:`, err);
       }
-    } catch (err) {
-      console.warn(`Backend /api/projects/${projectId} error, using client store:`, err);
     }
 
     const locals = getLocalProjects();
@@ -42,20 +52,22 @@ export const apiClient = {
 
   // 3. Create project
   async createProject(name: string, description?: string): Promise<Project> {
-    try {
-      const res = await fetch('/api/projects', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ name, description }),
-      });
+    if (!isVercel) {
+      try {
+        const res = await fetch('/api/projects', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ name, description }),
+        });
 
-      if (res.ok) {
-        const data = await res.json();
-        saveLocalProject(data);
-        return data;
+        if (res.ok) {
+          const data = await res.json();
+          saveLocalProject(data);
+          return data;
+        }
+      } catch (err) {
+        console.warn('Backend /api/projects POST failed (404/network), falling back to client engine:', err);
       }
-    } catch (err) {
-      console.warn('Backend /api/projects POST failed (404/network), falling back to client engine:', err);
     }
 
     // Client-side fallback creation
@@ -85,30 +97,32 @@ export const apiClient = {
     files: File[], 
     categories?: Record<string, 'drawing' | 'specification'>
   ): Promise<Project> {
-    // Attempt backend upload first
+    // Attempt backend upload first if not running on static Vercel
     let backendSucceeded = false;
-    try {
-      const formData = new FormData();
-      files.forEach((f) => formData.append('files', f));
-      if (categories) {
-        formData.append('categories', JSON.stringify(categories));
-      }
-
-      const res = await fetch(`/api/projects/${projectId}/documents`, {
-        method: 'POST',
-        body: formData,
-      });
-
-      if (res.ok) {
-        const data = await res.json();
-        if (data.project) {
-          saveLocalProject(data.project);
-          return data.project;
+    if (!isVercel) {
+      try {
+        const formData = new FormData();
+        files.forEach((f) => formData.append('files', f));
+        if (categories) {
+          formData.append('categories', JSON.stringify(categories));
         }
-        backendSucceeded = true;
+
+        const res = await fetch(`/api/projects/${projectId}/documents`, {
+          method: 'POST',
+          body: formData,
+        });
+
+        if (res.ok) {
+          const data = await res.json();
+          if (data.project) {
+            saveLocalProject(data.project);
+            return data.project;
+          }
+          backendSucceeded = true;
+        }
+      } catch (err) {
+        console.warn('Backend document upload failed (404/network), extracting in browser:', err);
       }
-    } catch (err) {
-      console.warn('Backend document upload failed (404/network), extracting in browser:', err);
     }
 
     // If backend upload failed (or 404 on Vercel), parse PDFs directly in browser
@@ -177,20 +191,22 @@ export const apiClient = {
 
   // 5. Analyze Project / Cross-Check
   async analyzeProject(projectId: string): Promise<Project> {
-    try {
-      const res = await fetch(`/api/projects/${projectId}/analyze`, {
-        method: 'POST',
-      });
+    if (!isVercel) {
+      try {
+        const res = await fetch(`/api/projects/${projectId}/analyze`, {
+          method: 'POST',
+        });
 
-      if (res.ok) {
-        const data = await res.json();
-        if (data.project) {
-          saveLocalProject(data.project);
-          return data.project;
+        if (res.ok) {
+          const data = await res.json();
+          if (data.project) {
+            saveLocalProject(data.project);
+            return data.project;
+          }
         }
+      } catch (err) {
+        console.warn('Backend analyze failed (404/network), executing client scope engine:', err);
       }
-    } catch (err) {
-      console.warn('Backend analyze failed (404/network), executing client scope engine:', err);
     }
 
     // Client-side cross-check analysis
