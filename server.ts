@@ -592,10 +592,11 @@ app.post('/api/projects/:id/chat', async (req, res) => {
     return res.status(404).json({ error: 'Project not found' });
   }
 
-  const { question } = req.body;
-  if (!question || typeof question !== 'string') {
+  const rawQuestion = req.body.question || req.body.query;
+  if (!rawQuestion || typeof rawQuestion !== 'string' || !rawQuestion.trim()) {
     return res.status(400).json({ error: 'Question is required' });
   }
+  const question = rawQuestion.trim();
 
   // If no documents exist in the project, decline grounded question
   if (!project.documents || project.documents.length === 0) {
@@ -672,30 +673,42 @@ app.post('/api/projects/:id/chat', async (req, res) => {
       return pText;
     }).join('\n\n');
 
-    const prompt = `You are a project question-answering assistant for an electrical estimator.
-STRICT RULES:
-- Answer the user's question ONLY using the uploaded project documents below.
-- Do NOT make up information, equipment, code requirements, or project facts.
-- Every claim must include citations (Document name, Sheet/Section, Page number).
-- If the answer cannot be verified from the uploaded project documents, state clearly: "Not enough information in the uploaded documents."
-- Do NOT turn into a generic conversational chatbot.
+    const systemInstruction = `You are a Senior Electrical Estimator & Specification Specialist specializing in Commercial Electrical Construction, CSI MasterFormat Division 26, and NEC / NFPA standards.
 
-DOCUMENTS CONTENT:
+OPERATIONAL MODES & INTENT CLASSIFICATION:
+
+MODE 1: DIRECT DOCUMENT QA (DEFAULT FOR CHAT)
+- Trigger: User asks a factual, technical, or informational question about specifications or drawings (e.g., conduit types, wiring methods, equipment ratings, emergency power, approved manufacturers, testing requirements).
+- Behavior: Search the provided project documents, synthesize a direct, technical, and precise answer, and cite the EXACT CSI section number (e.g., Section 26 05 33 Raceway and Boxes, Section 26 24 16 Panelboards) and page number.
+- CRITICAL NEGATIVE CONSTRAINT: DO NOT frame the answer as a "conflict", "discrepancy", or "scope gap". DO NOT mention "conflicts" or recommend checking "mechanical schedules" or other unrelated trades unless the user specifically inquired about them or unless the text explicitly mandates a cross-trade interface.
+
+MODE 2: SCOPE & GAP AUDIT (TRIGGERED ONLY ON EXPLICIT COMPARISON REQUESTS)
+- Trigger: The user explicitly uses words like "conflict", "gap", "discrepancy", "omission", "missing allowance", "mismatch between specs and drawings", or "compare".
+- Behavior: Cross-reference Specification requirements against Drawing schedules/notes, identify scope gaps or missing contractor allowances, and cite both sources.
+
+FALLBACK & GROUNDING INTEGRITY:
+- If the requested detail is not found in the uploaded documents, state clearly: "This detail is not mentioned in the uploaded Division 26 specification document."
+- Strictly forbid hallucinations, ungrounded assumptions, or pointing estimators to unrelated trades.`;
+
+    const prompt = `PROJECT DOCUMENTS CONTEXT:
 ${docContext}
 
-USER QUESTION: "${question}"
-`;
+USER INQUIRY:
+"${question}"
+
+Provide a grounded response with precise citations following the System Instructions.`;
 
     const response = await ai.models.generateContent({
       model: 'gemini-3.8-flash',
       contents: prompt,
       config: {
+        systemInstruction,
         responseMimeType: 'application/json',
         responseSchema: {
           type: Type.OBJECT,
           properties: {
-            content: { type: Type.STRING, description: 'Direct, factual, evidence-based answer or statement of not enough information' },
-            notEnoughInfo: { type: Type.BOOLEAN, description: 'True if answer cannot be verified from the documents' },
+            content: { type: Type.STRING, description: 'Direct, technical, evidence-based answer or fallback statement' },
+            notEnoughInfo: { type: Type.BOOLEAN, description: 'True if detail is not found in the documents' },
             citations: {
               type: Type.ARRAY,
               items: {

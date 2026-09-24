@@ -294,7 +294,7 @@ export const apiClient = {
       const res = await fetch(`/api/projects/${projectId}/chat`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ query }),
+        body: JSON.stringify({ question: query, query }),
       });
 
       if (res.ok) {
@@ -328,14 +328,22 @@ export const apiClient = {
 
     const citations: Array<{ documentName: string; sheetOrSection?: string; pageNumber: number; quote: string }> = [];
 
+    // Search for keywords
+    const keywords = qLower.split(/\s+/).filter(w => w.length > 3);
+
     current.documents.forEach((doc) => {
       doc.pages.forEach((page) => {
-        if (citations.length < 3 && page.text.toLowerCase().includes(qLower)) {
+        const textLower = page.text.toLowerCase();
+        const hasMatch = keywords.some(k => textLower.includes(k));
+        if (citations.length < 3 && hasMatch) {
+          const matchWord = keywords.find(k => textLower.includes(k)) || '';
+          const idx = textLower.indexOf(matchWord);
+          const snippet = page.text.slice(Math.max(0, idx - 40), Math.min(page.text.length, idx + 140)).replace(/\n/g, ' ').trim();
           citations.push({
             documentName: doc.name,
-            sheetOrSection: page.sheetOrSection,
+            sheetOrSection: page.sheetOrSection || `Section 26`,
             pageNumber: page.pageNumber,
-            quote: page.text.slice(0, 160) + '...',
+            quote: snippet,
           });
         }
       });
@@ -345,7 +353,7 @@ export const apiClient = {
       return {
         id: 'msg-' + Date.now(),
         role: 'assistant',
-        content: `Found matching references in project documents regarding "${query}". Citing ${citations.length} verified location(s):`,
+        content: `According to project document references regarding "${query}":\n\n"${citations[0].quote}"`,
         timestamp: new Date().toISOString(),
         citations,
         notEnoughInfo: false,
@@ -355,17 +363,10 @@ export const apiClient = {
     return {
       id: 'msg-' + Date.now(),
       role: 'assistant',
-      content: `The uploaded documents for "${current.name}" do not show a direct conflict regarding "${query}". Estimator recommendation: verify mechanical schedule and general notes on Drawing ${current.documents[0]?.name || 'Sheet E1'}.`,
+      content: 'This detail is not mentioned in the uploaded Division 26 specification document.',
       timestamp: new Date().toISOString(),
-      citations: [
-        {
-          documentName: current.documents[0]?.name || 'Drawing Package',
-          sheetOrSection: 'General Notes',
-          pageNumber: 1,
-          quote: 'Verify all equipment schedules, disconnect types, and panelboard connections against Division 26 specifications.',
-        },
-      ],
-      notEnoughInfo: false,
+      citations: [],
+      notEnoughInfo: true,
     };
   },
 
