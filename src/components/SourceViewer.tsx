@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { Project, Finding, ProjectDocument, DocumentPage } from '../types';
+import { sanitizePdfText } from '../utils/sanitizePdfText';
 import { 
   FileText, 
   Layers, 
@@ -89,7 +90,10 @@ export const SourceViewer: React.FC<SourceViewerProps> = ({
     }
   };
 
-  const renderHighlightedContent = (text: string, highlightSnippet?: string) => {
+  const renderHighlightedContent = (rawText: string, rawSnippet?: string) => {
+    const text = sanitizePdfText(rawText);
+    const highlightSnippet = rawSnippet ? sanitizePdfText(rawSnippet) : undefined;
+
     if (!highlightSnippet || !text.includes(highlightSnippet)) {
       return <div className="whitespace-pre-wrap leading-relaxed text-slate-700">{text}</div>;
     }
@@ -201,7 +205,7 @@ export const SourceViewer: React.FC<SourceViewerProps> = ({
                 Verified Requirement ({activeFinding.sourceA.location}):
               </div>
               <div className="text-xs text-amber-950 bg-white p-2.5 rounded-lg border border-amber-200 leading-relaxed font-medium">
-                "{activeFinding.sourceA.relevantText}"
+                "{sanitizePdfText(activeFinding.sourceA.relevantText)}"
               </div>
             </div>
             <div className="flex-1 p-4 overflow-y-auto text-xs font-sans leading-relaxed text-slate-700 bg-slate-50/40">
@@ -228,7 +232,7 @@ export const SourceViewer: React.FC<SourceViewerProps> = ({
                 Verified Drawing ({activeFinding.sourceB.location}):
               </div>
               <div className="text-xs text-sky-950 bg-white p-2.5 rounded-lg border border-sky-200 leading-relaxed font-medium">
-                "{activeFinding.sourceB.relevantText}"
+                "{sanitizePdfText(activeFinding.sourceB.relevantText)}"
               </div>
             </div>
             <div className="flex-1 p-4 overflow-y-auto text-xs font-sans leading-relaxed text-slate-700 bg-slate-50/40">

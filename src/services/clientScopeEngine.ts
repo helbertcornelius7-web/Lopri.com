@@ -1,4 +1,5 @@
 import { Project, ProjectDocument, Finding, DocumentPage, FindingType, ConfidenceLevel } from '../types';
+import { sanitizePdfText } from '../utils/sanitizePdfText';
 
 const STORAGE_KEY = 'lopri_electrical_projects';
 
@@ -54,17 +55,18 @@ export async function extractPdfTextInBrowser(file: File): Promise<{ text: strin
       // Match text within parentheses (e.g. (Text to display) Tj or [(T)(e)(x)(t)] TJ)
       const stringMatches = block.match(/\(([^()]*)\)/g);
       if (stringMatches) {
-        const line = stringMatches
+        const rawLine = stringMatches
           .map((s) => s.slice(1, -1))
-          .filter((s) => s.trim().length > 0 && !/^[\x00-\x1F\x7F]+$/.test(s))
+          .filter((s) => s.trim().length > 0)
           .join(' ');
-        if (line.trim()) {
-          textMatches.push(line.trim());
+        const sanitizedLine = sanitizePdfText(rawLine);
+        if (sanitizedLine.trim()) {
+          textMatches.push(sanitizedLine.trim());
         }
       }
     }
 
-    const fullExtracted = textMatches.join(' \n');
+    const fullExtracted = sanitizePdfText(textMatches.join(' \n'));
 
     // Detect page count from /Type /Page occurrences
     const pageMatches = rawString.match(/\/Type\s*\/Page\b/g);
