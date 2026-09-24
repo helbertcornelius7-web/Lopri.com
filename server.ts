@@ -4,7 +4,7 @@ import multer from 'multer';
 import { PDFParse } from 'pdf-parse';
 import { createServer as createViteServer } from 'vite';
 import { GoogleGenAI, Type } from '@google/genai';
-import { Project, ProjectDocument, Finding, DocumentPage } from './src/types.ts';
+import { Project, ProjectDocument, Finding, DocumentPage } from './src/types';
 
 const app = express();
 const PORT = 3000;
@@ -778,6 +778,11 @@ Provide a grounded response with precise citations following the System Instruct
       });
     }
   }
+});
+
+// Silence Vercel analytics/insights dev beacons to prevent 404 console errors
+app.all('/_vercel/*', (req, res) => {
+  res.status(204).end();
 });
 
 // ----------------------------------------------------

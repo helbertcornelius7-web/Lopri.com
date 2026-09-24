@@ -109,6 +109,13 @@ export const StudioBuildHome: React.FC<StudioBuildHomeProps> = React.memo(({
           color: 'text-amber-600',
           bg: 'bg-amber-50 text-amber-700 border-amber-200',
         };
+      default:
+        return {
+          label: 'Scope Finding',
+          icon: AlertTriangle,
+          color: 'text-amber-600',
+          bg: 'bg-amber-50 text-amber-700 border-amber-200',
+        };
     }
   };
 

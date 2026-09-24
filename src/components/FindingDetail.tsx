@@ -82,6 +82,13 @@ export const FindingDetail: React.FC<FindingDetailProps> = ({
           badgeBg: 'bg-yellow-50 text-yellow-800 border-yellow-200',
           desc: 'Different project documents provide contradictory equipment sources, feeders, or schedules.',
         };
+      default:
+        return {
+          label: 'Scope Finding',
+          icon: AlertTriangle,
+          badgeBg: 'bg-amber-50 text-amber-800 border-amber-200',
+          desc: 'Identified discrepancy or requirement for estimator review.',
+        };
     }
   };
 

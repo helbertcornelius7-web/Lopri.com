@@ -66,12 +66,18 @@ export const SourceViewer: React.FC<SourceViewerProps> = ({
       : activeFinding.sourceB
     : null;
 
-  const handleCopyCitation = () => {
+  const handleCopyCitation = async () => {
     if (!activeEvidence) return;
-    const citation = `Document: ${activeEvidence.documentName} | ${activeEvidence.sheetNumber ? `Sheet: ${activeEvidence.sheetNumber}` : `Section: ${activeEvidence.sectionNumber}`} | Page: ${activeEvidence.pageNumber}\nQuote: "${activeEvidence.relevantText}"`;
-    navigator.clipboard.writeText(citation);
-    setCopiedText(true);
-    setTimeout(() => setCopiedText(false), 2000);
+    const citation = `Document: ${activeEvidence.documentName || ''} | ${activeEvidence.sheetNumber ? `Sheet: ${activeEvidence.sheetNumber}` : `Section: ${activeEvidence.sectionNumber || ''}`} | Page: ${activeEvidence.pageNumber || 1}\nQuote: "${activeEvidence.relevantText || ''}"`;
+    try {
+      if (navigator?.clipboard?.writeText) {
+        await navigator.clipboard.writeText(citation);
+        setCopiedText(true);
+        setTimeout(() => setCopiedText(false), 2000);
+      }
+    } catch (err) {
+      console.warn('Clipboard write restricted:', err);
+    }
   };
 
   const handleSwitchTab = (tab: 'specification' | 'drawing') => {

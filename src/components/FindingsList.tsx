@@ -37,7 +37,7 @@ export const FindingsList: React.FC<FindingsListProps> = ({
         const matchTitle = f.title.toLowerCase().includes(term);
         const matchArea = f.systemArea.toLowerCase().includes(term);
         const matchExpl = f.explanation.toLowerCase().includes(term);
-        const matchDocs = (f.sourceA.documentName + f.sourceB.documentName).toLowerCase().includes(term);
+        const matchDocs = ((f.sourceA?.documentName || '') + ' ' + (f.sourceB?.documentName || '')).toLowerCase().includes(term);
         if (!matchTitle && !matchArea && !matchExpl && !matchDocs) return false;
       }
       return true;
@@ -75,6 +75,13 @@ export const FindingsList: React.FC<FindingsListProps> = ({
           color: 'text-yellow-700',
           bulletColor: 'bg-yellow-500',
         };
+      default:
+        return {
+          label: 'Scope Finding',
+          icon: AlertTriangle,
+          color: 'text-amber-700',
+          bulletColor: 'bg-amber-500',
+        };
     }
   };
 
@@ -93,6 +100,7 @@ export const FindingsList: React.FC<FindingsListProps> = ({
           </span>
         );
       case 'LOW':
+      default:
         return (
           <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded bg-slate-100 text-slate-600 border border-slate-200">
             Low
@@ -122,6 +130,7 @@ export const FindingsList: React.FC<FindingsListProps> = ({
           </span>
         );
       case 'PENDING':
+      default:
         return (
           <span className="text-[10px] font-medium px-1.5 py-0.5 rounded bg-slate-100 text-slate-500 border border-slate-200">
             Pending

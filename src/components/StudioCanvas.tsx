@@ -205,24 +205,26 @@ export const StudioCanvas: React.FC<StudioCanvasProps> = React.memo(({
                       <FileText className="w-3.5 h-3.5 text-amber-600" />
                       <span>Source A: Specification</span>
                     </div>
-                    <button
-                      onClick={() => onInspectEvidence(activeFinding.sourceA.documentName, activeFinding.sourceA.pageNumber, 'specification')}
-                      className="text-[10px] text-amber-700 hover:text-amber-900 font-semibold flex items-center gap-1 transition-colors"
-                      title="Inspect in Evidence Panel"
-                    >
-                      <span>View in Doc</span>
-                      <ExternalLink className="w-2.5 h-2.5" />
-                    </button>
+                    {activeFinding.sourceA && (
+                      <button
+                        onClick={() => onInspectEvidence(activeFinding.sourceA?.documentName || '', activeFinding.sourceA?.pageNumber || 1, 'specification')}
+                        className="text-[10px] text-amber-700 hover:text-amber-900 font-semibold flex items-center gap-1 transition-colors cursor-pointer"
+                        title="Inspect in Evidence Panel"
+                      >
+                        <span>View in Doc</span>
+                        <ExternalLink className="w-2.5 h-2.5" />
+                      </button>
+                    )}
                   </div>
                   <div className="text-[11px] font-mono text-slate-500 mb-2">
-                    {activeFinding.sourceA.documentName} • Section {activeFinding.sourceA.sectionNumber || 'N/A'} • Page {activeFinding.sourceA.pageNumber}
+                    {activeFinding.sourceA?.documentName || 'Specification Document'} • Section {activeFinding.sourceA?.sectionNumber || 'N/A'} • Page {activeFinding.sourceA?.pageNumber || 1}
                   </div>
                   <blockquote className="text-xs text-slate-800 bg-amber-50/40 p-2.5 rounded-lg border-l-2 border-amber-500 font-mono leading-relaxed">
-                    "{activeFinding.sourceA.relevantText}"
+                    "{activeFinding.sourceA?.relevantText || 'No specific excerpt recorded.'}"
                   </blockquote>
                 </div>
                 <div className="pt-2 text-[10px] text-slate-400 font-mono">
-                  Location: {activeFinding.sourceA.location || 'Section Spec Body'}
+                  Location: {activeFinding.sourceA?.location || 'Section Spec Body'}
                 </div>
               </div>
 
@@ -234,24 +236,26 @@ export const StudioCanvas: React.FC<StudioCanvasProps> = React.memo(({
                       <Layers className="w-3.5 h-3.5 text-sky-600" />
                       <span>Source B: Drawing Plan / Schedule</span>
                     </div>
-                    <button
-                      onClick={() => onInspectEvidence(activeFinding.sourceB.documentName, activeFinding.sourceB.pageNumber, 'drawing')}
-                      className="text-[10px] text-sky-700 hover:text-sky-900 font-semibold flex items-center gap-1 transition-colors"
-                      title="Inspect in Evidence Panel"
-                    >
-                      <span>View in Doc</span>
-                      <ExternalLink className="w-2.5 h-2.5" />
-                    </button>
+                    {activeFinding.sourceB && (
+                      <button
+                        onClick={() => onInspectEvidence(activeFinding.sourceB?.documentName || '', activeFinding.sourceB?.pageNumber || 1, 'drawing')}
+                        className="text-[10px] text-sky-700 hover:text-sky-900 font-semibold flex items-center gap-1 transition-colors cursor-pointer"
+                        title="Inspect in Evidence Panel"
+                      >
+                        <span>View in Doc</span>
+                        <ExternalLink className="w-2.5 h-2.5" />
+                      </button>
+                    )}
                   </div>
                   <div className="text-[11px] font-mono text-slate-500 mb-2">
-                    {activeFinding.sourceB.documentName} • Sheet {activeFinding.sourceB.sheetNumber || 'N/A'} • Page {activeFinding.sourceB.pageNumber}
+                    {activeFinding.sourceB?.documentName || 'Drawing Document'} • Sheet {activeFinding.sourceB?.sheetNumber || 'N/A'} • Page {activeFinding.sourceB?.pageNumber || 1}
                   </div>
                   <blockquote className="text-xs text-slate-800 bg-sky-50/40 p-2.5 rounded-lg border-l-2 border-sky-500 font-mono leading-relaxed">
-                    "{activeFinding.sourceB.relevantText}"
+                    "{activeFinding.sourceB?.relevantText || 'No specific drawing schedule excerpt recorded.'}"
                   </blockquote>
                 </div>
                 <div className="pt-2 text-[10px] text-slate-400 font-mono">
-                  Location: {activeFinding.sourceB.location || 'Drawing Plan'}
+                  Location: {activeFinding.sourceB?.location || 'Drawing Plan'}
                 </div>
               </div>
             </div>

@@ -13,17 +13,9 @@ import { StudioBuildHome } from './components/StudioBuildHome';
 import { StudioCanvas } from './components/StudioCanvas';
 import { StudioInspector } from './components/StudioInspector';
 import { FeedbackButton } from './components/FeedbackButton';
-
-// High-performance code-splitting: lazy load heavy modals on demand
-const UploadModal = React.lazy(() =>
-  import('./components/UploadModal').then((m) => ({ default: m.UploadModal }))
-);
-const PipelineStatusModal = React.lazy(() =>
-  import('./components/PipelineStatusModal').then((m) => ({ default: m.PipelineStatusModal }))
-);
-const ExportSummaryModal = React.lazy(() =>
-  import('./components/ExportSummaryModal').then((m) => ({ default: m.ExportSummaryModal }))
-);
+import { UploadModal } from './components/UploadModal';
+import { PipelineStatusModal } from './components/PipelineStatusModal';
+import { ExportSummaryModal } from './components/ExportSummaryModal';
 
 export default function App() {
   const [project, setProject] = useState<Project>(EMPTY_PROJECT);
@@ -54,33 +46,6 @@ export default function App() {
   const [isPipelineOpen, setIsPipelineOpen] = useState(false);
   const [isExportOpen, setIsExportOpen] = useState(false);
 
-  // Fetch project list on load
-  const loadProjects = useCallback(async () => {
-    try {
-      const list = await apiClient.getProjects();
-      if (list && list.length > 0) {
-        setAllProjects(list.map((p) => ({
-          id: p.id,
-          name: p.name,
-          status: p.status,
-          findingsCount: p.findings.length,
-        })));
-        setProject((current) => {
-          if (!current.id || !list.some((p: any) => p.id === current.id)) {
-            loadProject(list[0].id);
-          }
-          return current;
-        });
-      }
-    } catch (err) {
-      console.warn('Could not fetch projects list:', err);
-    }
-  }, []);
-
-  useEffect(() => {
-    loadProjects();
-  }, [loadProjects]);
-
   // Fetch specific project
   const loadProject = useCallback(async (projectId: string) => {
     try {
@@ -97,6 +62,39 @@ export default function App() {
       console.error('Error fetching project:', err);
     }
   }, []);
+
+  // Fetch project list on load
+  const loadProjects = useCallback(async () => {
+    try {
+      const list = await apiClient.getProjects();
+      if (list && list.length > 0) {
+        setAllProjects(list.map((p) => ({
+          id: p.id,
+          name: p.name,
+          status: p.status,
+          findingsCount: p.findings.length,
+        })));
+        return list;
+      }
+      return [];
+    } catch (err) {
+      console.warn('Could not fetch projects list:', err);
+      return [];
+    }
+  }, []);
+
+  useEffect(() => {
+    let isMounted = true;
+    (async () => {
+      const list = await loadProjects();
+      if (isMounted && list.length > 0) {
+        await loadProject(list[0].id);
+      }
+    })();
+    return () => {
+      isMounted = false;
+    };
+  }, [loadProjects, loadProject]);
 
   const activeFinding = useMemo(() => {
     return project.findings.find((f) => f.id === selectedFindingId) || project.findings[0] || null;
@@ -252,7 +250,7 @@ export default function App() {
 
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [activeFinding, project.findings, currentView]);
+  }, [activeFinding, project.findings, currentView, handleAccept, handleReject, handleReviewLater]);
 
   return (
     <div className="flex flex-col h-screen w-screen bg-slate-100 text-slate-900 font-sans overflow-hidden antialiased">
@@ -343,44 +341,32 @@ export default function App() {
         )}
       </div>
 
-      {/* Upload Modal (Lazy loaded on-demand) */}
-      {isUploadOpen && (
-        <Suspense fallback={null}>
-          <UploadModal
-            isOpen={isUploadOpen}
-            onClose={() => setIsUploadOpen(false)}
-            onUploadSuccess={(newProj) => {
-              setProject(newProj);
-              loadProjects();
-              if (newProj.findings.length > 0) {
-                setSelectedFindingId(newProj.findings[0].id);
-              }
-            }}
-          />
-        </Suspense>
-      )}
+      {/* Upload Modal */}
+      <UploadModal
+        isOpen={isUploadOpen}
+        onClose={() => setIsUploadOpen(false)}
+        onUploadSuccess={(newProj) => {
+          setProject(newProj);
+          loadProjects();
+          if (newProj.findings.length > 0) {
+            setSelectedFindingId(newProj.findings[0].id);
+          }
+        }}
+      />
 
-      {/* Pipeline Status Modal (Lazy loaded on-demand) */}
-      {isPipelineOpen && (
-        <Suspense fallback={null}>
-          <PipelineStatusModal
-            isOpen={isPipelineOpen}
-            onClose={() => setIsPipelineOpen(false)}
-            project={project}
-          />
-        </Suspense>
-      )}
+      {/* Pipeline Status Modal */}
+      <PipelineStatusModal
+        isOpen={isPipelineOpen}
+        onClose={() => setIsPipelineOpen(false)}
+        project={project}
+      />
 
-      {/* Export Summary Modal (Lazy loaded on-demand) */}
-      {isExportOpen && (
-        <Suspense fallback={null}>
-          <ExportSummaryModal
-            isOpen={isExportOpen}
-            onClose={() => setIsExportOpen(false)}
-            project={project}
-          />
-        </Suspense>
-      )}
+      {/* Export Summary Modal */}
+      <ExportSummaryModal
+        isOpen={isExportOpen}
+        onClose={() => setIsExportOpen(false)}
+        project={project}
+      />
 
       {/* Floating Feedback Button (Always accessible on bottom corner for mobile / fast feedback) */}
       <div className="fixed bottom-4 right-4 z-40 sm:hidden">

@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { Project, Finding, ProjectDocument } from '../types';
 import { SourceViewer } from './SourceViewer';
+import { sanitizePdfText } from '../utils/sanitizePdfText';
 import { 
   FileSearch, 
   Sliders, 
@@ -138,7 +139,7 @@ export const StudioInspector: React.FC<StudioInspectorProps> = React.memo(({
                       <span className="text-slate-400 font-normal">{p.title}</span>
                     </div>
                     <p className="text-[11px] text-slate-600 line-clamp-3 leading-relaxed font-sans">
-                      {p.text}
+                      {sanitizePdfText(p.text)}
                     </p>
                   </div>
                 ))}
