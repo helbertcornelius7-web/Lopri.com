@@ -34,7 +34,7 @@ interface StudioCanvasProps {
   isChatLoading: boolean;
 }
 
-export const StudioCanvas: React.FC<StudioCanvasProps> = ({
+export const StudioCanvas: React.FC<StudioCanvasProps> = React.memo(({
   project,
   activeFinding,
   onAccept,
@@ -469,4 +469,4 @@ export const StudioCanvas: React.FC<StudioCanvasProps> = ({
       </div>
     </main>
   );
-};
+});

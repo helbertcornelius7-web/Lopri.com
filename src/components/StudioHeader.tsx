@@ -36,7 +36,7 @@ interface StudioHeaderProps {
   onChangeView: (view: 'home' | 'playground' | 'history' | 'gallery') => void;
 }
 
-export const StudioHeader: React.FC<StudioHeaderProps> = ({
+export const StudioHeader: React.FC<StudioHeaderProps> = React.memo(({
   project,
   allProjects,
   onSelectProject,
@@ -214,4 +214,4 @@ export const StudioHeader: React.FC<StudioHeaderProps> = ({
       </div>
     </header>
   );
-};
+});

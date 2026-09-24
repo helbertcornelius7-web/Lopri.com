@@ -38,7 +38,7 @@ interface StudioSidebarProps {
   onToggleSidebar?: () => void;
 }
 
-export const StudioSidebar: React.FC<StudioSidebarProps> = ({
+export const StudioSidebar: React.FC<StudioSidebarProps> = React.memo(({
   project,
   currentView,
   onChangeView,
@@ -300,4 +300,4 @@ export const StudioSidebar: React.FC<StudioSidebarProps> = ({
       </div>
     </aside>
   );
-};
+});

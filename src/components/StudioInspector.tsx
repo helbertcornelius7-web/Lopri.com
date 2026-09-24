@@ -21,7 +21,7 @@ interface StudioInspectorProps {
   onClose: () => void;
 }
 
-export const StudioInspector: React.FC<StudioInspectorProps> = ({
+export const StudioInspector: React.FC<StudioInspectorProps> = React.memo(({
   project,
   activeFinding,
   preferredView,
@@ -243,4 +243,4 @@ export const StudioInspector: React.FC<StudioInspectorProps> = ({
       )}
     </aside>
   );
-};
+});

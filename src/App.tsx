@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useMemo, Suspense } from 'react';
 import { Project, Finding, FindingStatus, ChatMessage, ProjectDocument } from './types';
 import { EMPTY_PROJECT } from './demoData';
 import { apiClient } from './services/apiClient';
@@ -12,10 +12,18 @@ import { StudioSidebar } from './components/StudioSidebar';
 import { StudioBuildHome } from './components/StudioBuildHome';
 import { StudioCanvas } from './components/StudioCanvas';
 import { StudioInspector } from './components/StudioInspector';
-import { UploadModal } from './components/UploadModal';
-import { PipelineStatusModal } from './components/PipelineStatusModal';
-import { ExportSummaryModal } from './components/ExportSummaryModal';
 import { FeedbackButton } from './components/FeedbackButton';
+
+// High-performance code-splitting: lazy load heavy modals on demand
+const UploadModal = React.lazy(() =>
+  import('./components/UploadModal').then((m) => ({ default: m.UploadModal }))
+);
+const PipelineStatusModal = React.lazy(() =>
+  import('./components/PipelineStatusModal').then((m) => ({ default: m.PipelineStatusModal }))
+);
+const ExportSummaryModal = React.lazy(() =>
+  import('./components/ExportSummaryModal').then((m) => ({ default: m.ExportSummaryModal }))
+);
 
 export default function App() {
   const [project, setProject] = useState<Project>(EMPTY_PROJECT);
@@ -74,7 +82,7 @@ export default function App() {
   }, [loadProjects]);
 
   // Fetch specific project
-  const loadProject = async (projectId: string) => {
+  const loadProject = useCallback(async (projectId: string) => {
     try {
       const data = await apiClient.getProject(projectId);
       if (data) {
@@ -88,12 +96,14 @@ export default function App() {
     } catch (err) {
       console.error('Error fetching project:', err);
     }
-  };
+  }, []);
 
-  const activeFinding = project.findings.find((f) => f.id === selectedFindingId) || project.findings[0] || null;
+  const activeFinding = useMemo(() => {
+    return project.findings.find((f) => f.id === selectedFindingId) || project.findings[0] || null;
+  }, [project.findings, selectedFindingId]);
 
   // Decision updater helper
-  const updateFindingStatus = async (findingId: string, newStatus: FindingStatus) => {
+  const updateFindingStatus = useCallback(async (findingId: string, newStatus: FindingStatus) => {
     setProject((prev) => ({
       ...prev,
       findings: prev.findings.map((f) =>
@@ -108,13 +118,13 @@ export default function App() {
     } catch (err) {
       console.error('Failed to sync finding status:', err);
     }
-  };
+  }, [project.id]);
 
-  const handleAccept = (findingId: string) => updateFindingStatus(findingId, 'ACCEPTED');
-  const handleReject = (findingId: string) => updateFindingStatus(findingId, 'REJECTED');
-  const handleReviewLater = (findingId: string) => updateFindingStatus(findingId, 'REVIEW_LATER');
+  const handleAccept = useCallback((findingId: string) => updateFindingStatus(findingId, 'ACCEPTED'), [updateFindingStatus]);
+  const handleReject = useCallback((findingId: string) => updateFindingStatus(findingId, 'REJECTED'), [updateFindingStatus]);
+  const handleReviewLater = useCallback((findingId: string) => updateFindingStatus(findingId, 'REVIEW_LATER'), [updateFindingStatus]);
 
-  const handleUpdateNotes = async (findingId: string, notes: string) => {
+  const handleUpdateNotes = useCallback(async (findingId: string, notes: string) => {
     setProject((prev) => ({
       ...prev,
       findings: prev.findings.map((f) =>
@@ -127,9 +137,9 @@ export default function App() {
     } catch (err) {
       console.error('Failed to sync estimator notes:', err);
     }
-  };
+  }, [project.id]);
 
-  const handleResetDemo = async () => {
+  const handleResetDemo = useCallback(async () => {
     try {
       await apiClient.resetWorkspace();
     } catch (err) {
@@ -139,10 +149,10 @@ export default function App() {
     setAllProjects([]);
     setSelectedFindingId(null);
     setChatMessages([]);
-  };
+  }, []);
 
   // Re-run Scope Check (AI Studio Primary Action)
-  const handleRunScopeCheck = async () => {
+  const handleRunScopeCheck = useCallback(async () => {
     if (!project.id || project.documents.length === 0) {
       setIsUploadOpen(true);
       return;
@@ -161,10 +171,10 @@ export default function App() {
     } finally {
       setIsAnalyzing(false);
     }
-  };
+  }, [project.id, project.documents.length]);
 
   // Grounded Prompt Execution from Canvas Prompt Bar or Build Home Input
-  const handleSendMessage = async (query: string) => {
+  const handleSendMessage = useCallback(async (query: string) => {
     if (!query.trim() || isChatLoading) return;
 
     const userMsg: ChatMessage = {
@@ -203,16 +213,14 @@ export default function App() {
     } finally {
       setIsChatLoading(false);
     }
-  };
+  }, [isChatLoading, project.id, project.documents.length]);
 
   // Jump from finding or citation directly to Inspector evidence viewer
-  const handleInspectEvidence = (docName: string, pageNum: number, view: 'specification' | 'drawing') => {
+  const handleInspectEvidence = useCallback((docName: string, pageNum: number, view: 'specification' | 'drawing') => {
     setPreferredView(view);
-    if (!isRightOpen) {
-      setIsRightOpen(true);
-    }
+    setIsRightOpen(true);
     setCurrentView('playground');
-  };
+  }, []);
 
   // Keyboard navigation for fast estimator review in playground
   useEffect(() => {
@@ -335,32 +343,44 @@ export default function App() {
         )}
       </div>
 
-      {/* Upload Modal */}
-      <UploadModal
-        isOpen={isUploadOpen}
-        onClose={() => setIsUploadOpen(false)}
-        onUploadSuccess={(newProj) => {
-          setProject(newProj);
-          loadProjects();
-          if (newProj.findings.length > 0) {
-            setSelectedFindingId(newProj.findings[0].id);
-          }
-        }}
-      />
+      {/* Upload Modal (Lazy loaded on-demand) */}
+      {isUploadOpen && (
+        <Suspense fallback={null}>
+          <UploadModal
+            isOpen={isUploadOpen}
+            onClose={() => setIsUploadOpen(false)}
+            onUploadSuccess={(newProj) => {
+              setProject(newProj);
+              loadProjects();
+              if (newProj.findings.length > 0) {
+                setSelectedFindingId(newProj.findings[0].id);
+              }
+            }}
+          />
+        </Suspense>
+      )}
 
-      {/* Pipeline Status Modal */}
-      <PipelineStatusModal
-        isOpen={isPipelineOpen}
-        onClose={() => setIsPipelineOpen(false)}
-        project={project}
-      />
+      {/* Pipeline Status Modal (Lazy loaded on-demand) */}
+      {isPipelineOpen && (
+        <Suspense fallback={null}>
+          <PipelineStatusModal
+            isOpen={isPipelineOpen}
+            onClose={() => setIsPipelineOpen(false)}
+            project={project}
+          />
+        </Suspense>
+      )}
 
-      {/* Export Summary Modal */}
-      <ExportSummaryModal
-        isOpen={isExportOpen}
-        onClose={() => setIsExportOpen(false)}
-        project={project}
-      />
+      {/* Export Summary Modal (Lazy loaded on-demand) */}
+      {isExportOpen && (
+        <Suspense fallback={null}>
+          <ExportSummaryModal
+            isOpen={isExportOpen}
+            onClose={() => setIsExportOpen(false)}
+            project={project}
+          />
+        </Suspense>
+      )}
 
       {/* Floating Feedback Button (Always accessible on bottom corner for mobile / fast feedback) */}
       <div className="fixed bottom-4 right-4 z-40 sm:hidden">

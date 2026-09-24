@@ -36,7 +36,7 @@ interface StudioBuildHomeProps {
   onReviewLaterFinding: (id: string) => void;
 }
 
-export const StudioBuildHome: React.FC<StudioBuildHomeProps> = ({
+export const StudioBuildHome: React.FC<StudioBuildHomeProps> = React.memo(({
   project,
   onSelectFinding,
   onOpenPlayground,
@@ -385,4 +385,4 @@ export const StudioBuildHome: React.FC<StudioBuildHomeProps> = ({
       </div>
     </div>
   );
-};
+});
