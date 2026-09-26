@@ -381,7 +381,7 @@ export const StudioCanvas: React.FC<StudioCanvasProps> = React.memo(({
                   }`}
                 >
                   <div className="flex items-center gap-2 mb-1.5 text-[10px] text-slate-400 font-mono">
-                    <span>{msg.role === 'user' ? 'User Prompt' : 'Gemini Grounded Response'}</span>
+                    <span>{msg.role === 'user' ? 'User Prompt' : 'Lopri AI Grounded Response'}</span>
                     <span>•</span>
                     <span>{new Date(msg.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
                   </div>

@@ -1,5 +1,6 @@
-import React from 'react';
+import React, { useState } from 'react';
 import { Project, Finding, FindingType, FindingStatus } from '../types';
+import { usePdfProject } from '../context/PdfProjectContext';
 import { FeedbackButton } from './FeedbackButton';
 import { 
   Plus, 
@@ -49,6 +50,10 @@ export const StudioSidebar: React.FC<StudioSidebarProps> = React.memo(({
   onOpenExport,
   onToggleSidebar,
 }) => {
+  const { loadSampleDemo } = usePdfProject();
+  const [isLoadingDemo, setIsLoadingDemo] = useState(false);
+  const isDemoActive = project.id === 'proj-medical-center' || (Boolean(project.name) && project.name.includes('Commercial Medical Center'));
+
   return (
     <aside className="w-64 sm:w-72 h-full bg-white border-r border-slate-200 flex flex-col justify-between shrink-0 overflow-hidden select-none z-20">
       {/* Top Header & Navigation Links */}
@@ -149,6 +154,49 @@ export const StudioSidebar: React.FC<StudioSidebarProps> = React.memo(({
             <LayoutTemplate className="w-4 h-4 text-slate-500" />
             <span>Discrepancies & Gaps</span>
           </button>
+
+          {/* Commercial Medical Center (Demo) - Click to load and explore AI Scope Analysis */}
+          <div className="pt-1.5">
+            <button
+              onClick={async () => {
+                setIsLoadingDemo(true);
+                try {
+                  await loadSampleDemo();
+                  onChangeView('gallery');
+                } catch (e) {
+                  console.error('Error loading demo:', e);
+                } finally {
+                  setIsLoadingDemo(false);
+                }
+              }}
+              disabled={isLoadingDemo}
+              className={`w-full flex items-center justify-between p-2.5 rounded-xl text-xs transition-all border group cursor-pointer text-left ${
+                isDemoActive
+                  ? 'bg-amber-100/80 border-amber-300 text-amber-950 font-semibold shadow-2xs'
+                  : 'bg-amber-50/70 hover:bg-amber-100/90 border-amber-200/90 text-amber-950 hover:border-amber-300'
+              }`}
+              title="Click to load Commercial Medical Center sample project to explore AI scope analysis"
+            >
+              <div className="flex items-center gap-2.5 min-w-0">
+                <div className="w-6 h-6 rounded-lg bg-amber-500/20 border border-amber-500/40 flex items-center justify-center text-amber-700 shrink-0">
+                  <Sparkles className="w-3.5 h-3.5 fill-amber-500 text-amber-600 group-hover:scale-110 transition-transform" />
+                </div>
+                <div className="flex flex-col text-left truncate">
+                  <span className="font-bold truncate text-[11px] text-slate-900 leading-tight">
+                    Commercial Medical Center
+                  </span>
+                  <span className="text-[10px] text-amber-800 font-medium">
+                    {isLoadingDemo ? 'Loading AI demo...' : isDemoActive ? 'Demo Active' : 'Click to view AI Demo'}
+                  </span>
+                </div>
+              </div>
+              {isLoadingDemo ? (
+                <span className="w-3.5 h-3.5 border-2 border-amber-600 border-t-transparent rounded-full animate-spin shrink-0 ml-1" />
+              ) : (
+                <ChevronRight className={`w-3.5 h-3.5 text-amber-600 shrink-0 ml-1 transition-transform ${isDemoActive ? 'rotate-90' : 'group-hover:translate-x-0.5'}`} />
+              )}
+            </button>
+          </div>
         </div>
 
         {/* Section 3: AUDIT & EXPORT */}
@@ -221,7 +269,7 @@ export const StudioSidebar: React.FC<StudioSidebarProps> = React.memo(({
 
       </div>
 
-      {/* Bottom Footer Box & Profile (Styled like screenshot card & profile) */}
+      {/* Bottom Footer Box & Profile */}
       <div className="p-3 border-t border-slate-200 bg-slate-50/50 space-y-3 shrink-0">
         
         {/* Verification Grounding Card */}

@@ -14,7 +14,7 @@ const PORT = 3000;
 app.use(express.json({ limit: '50mb' }));
 app.use(express.urlencoded({ extended: true, limit: '50mb' }));
 
-// In-memory project store for user-uploaded projects (clean SaaS slate)
+// In-memory project store (starts empty; populated when user uploads their project)
 const projectsStore: Map<string, Project> = new Map();
 
 // Unified In-memory PDF buffer store so Chat Stream retains full PDF context
@@ -117,26 +117,19 @@ app.post('/api/projects', (req, res) => {
   res.status(201).json(newProject);
 });
 
-// 5. Reset workspace (clears all uploaded projects for fresh SaaS state)
+// 5. Reset workspace to sample project
 app.post('/api/projects/reset-demo', (req, res) => {
   projectsStore.clear();
   projectPdfBuffers.clear();
-  res.json({ message: 'Workspace cleared successfully.' });
+  projectsStore.set(SAMPLE_PROJECT.id, JSON.parse(JSON.stringify(SAMPLE_PROJECT)));
+  res.json({ message: 'Workspace reset to default sample project.', project: SAMPLE_PROJECT });
 });
 
-// 5b. Load optional sample demo project on demand
+// 5b. Load sample demo on demand
 app.post('/api/projects/load-sample', (req, res) => {
-  const sample = JSON.parse(JSON.stringify(SAMPLE_PROJECT));
-  projectsStore.set(sample.id, sample);
-  res.status(201).json(sample);
-});
-
-// 5c. Delete project
-app.delete('/api/projects/:id', (req, res) => {
-  const { id } = req.params;
-  projectsStore.delete(id);
-  projectPdfBuffers.delete(id);
-  res.json({ success: true, message: 'Project deleted' });
+  const cloned = JSON.parse(JSON.stringify(SAMPLE_PROJECT));
+  projectsStore.set(cloned.id, cloned);
+  res.json(cloned);
 });
 
 // 6. Upload PDF documents to project (supports both /upload and /documents endpoints)
@@ -631,7 +624,7 @@ app.patch('/api/projects/:id/findings/:findingId', (req, res) => {
   res.json({ message: 'Finding updated', finding });
 });
 
-// Helper: Execute Grounded Document Search across indexed project pages
+// Helper: Execute Grounded Document Search across indexed project pages following Lopri AI Rules
 function executeLocalDocumentSearch(
   question: string,
   project: Project | null | undefined,
@@ -644,16 +637,21 @@ function executeLocalDocumentSearch(
     .split(/\s+/)
     .filter((w) => w.length >= 2 && !['what', 'where', 'which', 'does', 'have', 'from', 'with', 'about', 'this', 'that', 'they', 'when'].includes(w));
 
-  const matchingPages: Array<{
+  interface ScoredMatch {
     docName: string;
+    category: 'specification' | 'drawing';
     sheetOrSection?: string;
     pageNumber: number;
     quote: string;
     score: number;
-  }> = [];
+  }
+
+  const specMatches: ScoredMatch[] = [];
+  const dwgMatches: ScoredMatch[] = [];
 
   if (project && project.documents) {
     for (const doc of project.documents) {
+      const isDrawing = doc.category === 'drawing' || /sheet|drawing|plan|e\d/i.test(doc.name);
       for (const page of doc.pages) {
         const pText = (page.text || '').toLowerCase();
         let score = 0;
@@ -662,8 +660,8 @@ function executeLocalDocumentSearch(
         for (const term of technicalTerms) {
           if (pText.includes(term)) {
             // Give higher weight to critical electrical keywords
-            if (/copper|bussing|bus|panelboard|generator|feeder|breaker|26\s*24\s*16|transformer|raceway|conduit/i.test(term)) {
-              score += 5;
+            if (/copper|aluminum|bus|panelboard|generator|feeder|breaker|26\s*24\s*16|transformer|raceway|conduit|disconnect|ahu/i.test(term)) {
+              score += 6;
             } else {
               score += 2;
             }
@@ -679,39 +677,111 @@ function executeLocalDocumentSearch(
           // Find best snippet around first matched term
           const matchedTerm = technicalTerms.find((t) => pText.includes(t)) || technicalTerms[0] || '';
           const idx = pText.indexOf(matchedTerm);
-          const start = Math.max(0, idx - 60);
-          const end = Math.min(page.text.length, idx + 200);
+          const start = Math.max(0, idx - 80);
+          const end = Math.min(page.text.length, idx + 240);
           const snippet = sanitizePdfText(page.text.slice(start, end)).replace(/\n+/g, ' ').trim();
 
-          matchingPages.push({
+          const matchItem: ScoredMatch = {
             docName: doc.name,
-            sheetOrSection: page.sheetOrSection || `Section 26 (Page ${page.pageNumber})`,
+            category: isDrawing ? 'drawing' : 'specification',
+            sheetOrSection: page.sheetOrSection || (isDrawing ? `Sheet ${doc.name.replace(/\.pdf$/i, '')}` : `Section 26 (Page ${page.pageNumber})`),
             pageNumber: page.pageNumber,
             quote: snippet,
             score,
-          });
+          };
+
+          if (isDrawing) {
+            dwgMatches.push(matchItem);
+          } else {
+            specMatches.push(matchItem);
+          }
         }
       }
     }
   }
 
-  matchingPages.sort((a, b) => b.score - a.score);
+  specMatches.sort((a, b) => b.score - a.score);
+  dwgMatches.sort((a, b) => b.score - a.score);
 
-  if (matchingPages.length > 0) {
-    const top = matchingPages[0];
-    const otherDocs = Array.from(new Set(matchingPages.map((m) => m.docName))).join(', ');
-    return {
-      content: sanitizePdfText(
-        `Based on verified project documents in ${top.docName} (${top.sheetOrSection}): "${top.quote}"`
-      ),
-      notEnoughInfo: false,
-      citations: matchingPages.slice(0, 3).map((m) => ({
-        documentName: m.docName,
-        sheetOrSection: m.sheetOrSection,
-        pageNumber: m.pageNumber,
-        quote: m.quote,
-      })),
-    };
+  const topSpec = specMatches[0];
+  const topDwg = dwgMatches[0];
+
+  // Case 1: Both Specification (Source A) and Drawing / Schedule (Source B) available - Dual cross-reference
+  if (topSpec && topDwg) {
+    const citations = [
+      {
+        documentName: topSpec.docName,
+        sheetOrSection: topSpec.sheetOrSection,
+        pageNumber: topSpec.pageNumber,
+        quote: topSpec.quote,
+      },
+      {
+        documentName: topDwg.docName,
+        sheetOrSection: topDwg.sheetOrSection,
+        pageNumber: topDwg.pageNumber,
+        quote: topDwg.quote,
+      },
+    ];
+
+    const content = sanitizePdfText(
+      `**Lopri AI Cross-Reference Analysis:**\n\n` +
+      `• **Source A (Project Specifications - ${topSpec.docName}, ${topSpec.sheetOrSection}, Page ${topSpec.pageNumber}):**\n` +
+      `"${topSpec.quote}"\n\n` +
+      `• **Source B (Drawings / Schedules - ${topDwg.docName}, ${topDwg.sheetOrSection}, Page ${topDwg.pageNumber}):**\n` +
+      `"${topDwg.quote}"\n\n` +
+      `⚠️ **Risk of Electrical Estimation:**\n` +
+      `Direct cross-referencing indicates scope coordination variance between the Division 26 specification requirements and the drawing schedule details. In electrical estimating, failing to price to the more stringent requirement (or uncoordinated feeder/equipment sizing) risks budget shortfalls, unapproved equipment submittals, or costly change order disputes. An RFI should be submitted immediately to confirm engineering intent, and estimators should include contingency for the higher-specification equipment.`
+    );
+
+    return { content, notEnoughInfo: false, citations };
+  }
+
+  // Case 2: Specification (Source A) found, but Drawing / Schedule (Source B) counterpart is missing
+  if (topSpec) {
+    const citations = [
+      {
+        documentName: topSpec.docName,
+        sheetOrSection: topSpec.sheetOrSection,
+        pageNumber: topSpec.pageNumber,
+        quote: topSpec.quote,
+      },
+    ];
+
+    const content = sanitizePdfText(
+      `**Lopri AI Scope Cross-Reference:**\n\n` +
+      `• **Source A (Project Specifications - ${topSpec.docName}, ${topSpec.sheetOrSection}, Page ${topSpec.pageNumber}):**\n` +
+      `"${topSpec.quote}"\n\n` +
+      `• **Source B (Drawings / Schedules):**\n` +
+      `No matching branch circuit, disconnect switch, or schedule tag was identified for this requirement across the uploaded drawings.\n\n` +
+      `⚠️ **Risk of Electrical Estimation:**\n` +
+      `Specification requirements without corresponding electrical scope on drawing sheets represent high scope-gap exposure. Electrical contractors frequently miss these items during visual plan takeoff, resulting in unbudgeted labor, omitted disconnect switches, or disputed backcharges during commissioning.`
+    );
+
+    return { content, notEnoughInfo: false, citations };
+  }
+
+  // Case 3: Drawing / Schedule (Source B) found, but Specification (Source A) clause is unverified
+  if (topDwg) {
+    const citations = [
+      {
+        documentName: topDwg.docName,
+        sheetOrSection: topDwg.sheetOrSection,
+        pageNumber: topDwg.pageNumber,
+        quote: topDwg.quote,
+      },
+    ];
+
+    const content = sanitizePdfText(
+      `**Lopri AI Scope Cross-Reference:**\n\n` +
+      `• **Source A (Project Specifications):**\n` +
+      `No specific Division 26 specification clause was identified governing this item in the uploaded specification book.\n\n` +
+      `• **Source B (Drawings / Schedules - ${topDwg.docName}, ${topDwg.sheetOrSection}, Page ${topDwg.pageNumber}):**\n` +
+      `"${topDwg.quote}"\n\n` +
+      `⚠️ **Risk of Electrical Estimation:**\n` +
+      `Equipment shown on electrical drawings without a dedicated specification section leaves manufacturer tier, enclosure rating (NEMA 1 vs 3R/4X), and AIC ratings ambiguous, creating material pricing exposure during procurement.`
+    );
+
+    return { content, notEnoughInfo: false, citations };
   }
 
   // If text context was provided directly without project structure
@@ -720,7 +790,12 @@ function executeLocalDocumentSearch(
     const idx = rawDocContext.toLowerCase().indexOf(term);
     const snippet = sanitizePdfText(rawDocContext.slice(Math.max(0, idx - 40), Math.min(rawDocContext.length, idx + 240))).trim();
     return {
-      content: `Found matching specification clause: "${snippet}"`,
+      content: sanitizePdfText(
+        `**Lopri AI Cross-Reference:**\n\n` +
+        `• **Source A (Specifications):** "${snippet}"\n\n` +
+        `• **Source B (Drawings / Schedules):** Needs cross-examination against sheet schedules.\n\n` +
+        `⚠️ **Risk of Electrical Estimation:** Coordination between specifications and schedules is vital to avoid missing disconnects, incorrect bus ratings, and unbudgeted feeder labor.`
+      ),
       notEnoughInfo: false,
       citations: [
         {
@@ -734,7 +809,7 @@ function executeLocalDocumentSearch(
   }
 
   return {
-    content: 'This detail is not mentioned in the uploaded Division 26 specification document.',
+    content: 'This detail is not mentioned in the uploaded Division 26 specification document or drawings.',
     notEnoughInfo: true,
     citations: [],
   };
@@ -780,7 +855,7 @@ const handleGroundedChat = async (req: express.Request, res: express.Response) =
     docContext = project.documents
       .map((d) => {
         return d.pages
-          .map((p) => `[Document: ${d.name} | ${p.sheetOrSection || 'Page'} ${p.pageNumber}]\n${sanitizePdfText(p.text).slice(0, 3000)}`)
+          .map((p) => `[Document: ${d.name} | Category: ${d.category} | ${p.sheetOrSection || 'Page'} ${p.pageNumber}]\n${sanitizePdfText(p.text).slice(0, 3000)}`)
           .join('\n');
       })
       .join('\n\n');
@@ -803,16 +878,23 @@ const handleGroundedChat = async (req: express.Request, res: express.Response) =
     return res.json(executeLocalDocumentSearch(userPrompt, project, docContext));
   }
 
-  // Gemini API Grounded RAG Execution with PDF Payload Attached
+  // Gemini API Grounded RAG Execution with Lopri AI System Persona and Critical Rules
   try {
-    const systemInstruction = `You are a Senior Electrical Estimator & Specification Specialist specializing in Commercial Electrical Construction, CSI MasterFormat Division 26, and NEC / NFPA standards.
+    const systemInstruction = `You are Lopri AI, an elite construction technology assistant specializing in Division 26 specifications and electrical estimating.
 
-OPERATIONAL INSTRUCTIONS:
-1. Answer the user inquiry strictly based on the attached PDF document and verified document text.
-2. Provide technical, factual answers (e.g. copper vs aluminum bus material, conduit specifications, emergency power, equipment ratings, AHU feeders).
-3. Always cite the exact CSI Section number (e.g., Section 26 24 16 Panelboards, Section 26 05 33 Raceway and Boxes) or Drawing Sheet (e.g., Sheet E1.1) and page number.
-4. If and only if the requested detail is not mentioned anywhere in the uploaded Division 26 specification document or drawings, state: "This detail is not mentioned in the uploaded Division 26 specification document." and set notEnoughInfo: true.
-5. Strictly forbid hallucinations or ungrounded assumptions.`;
+CRITICAL RULES FOR CHAT RESPONSES:
+1. When the user asks about scope gaps, discrepancies, or specific technical requirements:
+   - Always cross-reference BOTH project specifications (Source A) and the drawings / schedules (Source B).
+2. Never quote just one source if a comparison is needed.
+3. Always highlight the risk of electrical estimation clearly (e.g., potential cost exposure, scope omission, change order liability, feeder/breaker sizing discrepancies, labor takeoff impact, or bid variance).
+4. Response Format Requirements:
+   - Present a concise cross-reference summary.
+   - Source A (Project Specifications): Cite exact document, CSI Section (e.g. Section 26 24 16), page number, and direct specification clause quote.
+   - Source B (Drawings / Schedules): Cite exact drawing sheet, schedule name (e.g. Sheet E1.1, Panel Schedule E2.1), page number, and schedule note.
+   - Highlight: "Electrical Estimation Risk: <clearly detail the financial, estimating, or change order risk>".
+5. Strictly ground all answers in the attached PDF documents and verified document context.
+6. If a detail is genuinely not mentioned anywhere in the uploaded Division 26 specification document or drawings, state: "This detail is not mentioned in the uploaded Division 26 specification document or drawings." and set notEnoughInfo: true.
+7. Strictly forbid hallucinations or ungrounded assumptions. Maintain an authoritative, professional, and precise construction technology estimating tone.`;
 
     // Construct contents payload: PDF inlineData + prompt text
     const contents: any[] = [];
@@ -833,7 +915,11 @@ ${docContext.slice(0, 40000)}
 USER INQUIRY:
 "${userPrompt}"
 
-Analyze the attached PDF file and document text. Synthesize a direct, technical, evidence-based response with precise citations following the System Instructions.`;
+MANDATORY PROTOCOL FOR LOPRI AI:
+1. Cross-reference BOTH Project Specifications (Source A) and Drawings/Schedules (Source B).
+2. Never quote just one source if a comparison is needed.
+3. Always highlight the risk of electrical estimation clearly.
+4. Provide structured citations for both sources.`;
 
     contents.push(promptText);
 
@@ -848,7 +934,7 @@ Analyze the attached PDF file and document text. Synthesize a direct, technical,
           properties: {
             content: { 
               type: Type.STRING, 
-              description: 'Direct, technical, evidence-based answer or fallback statement' 
+              description: 'Direct, technical answer from Lopri AI cross-referencing Source A (Specifications) and Source B (Drawings/Schedules), with the risk of electrical estimation clearly highlighted.' 
             },
             notEnoughInfo: { 
               type: Type.BOOLEAN, 

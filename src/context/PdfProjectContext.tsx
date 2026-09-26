@@ -7,7 +7,7 @@ import { SAMPLE_PROJECT } from '../demoData';
 
 export const EMPTY_PROJECT: Project = {
   id: '',
-  name: 'No Project Selected',
+  name: '',
   createdAt: new Date().toISOString(),
   status: 'ready',
   processingSteps: [],
@@ -72,16 +72,25 @@ export function fileToBase64(file: File): Promise<string> {
 const INITIAL_WELCOME_MSG: ChatMessage = {
   id: 'msg-welcome',
   role: 'assistant',
-  content: 'Welcome to Free Electrical Scope AI (SaaS Platform). Upload your electrical drawings (single-line diagrams, floor plans, panel schedules) and Division 26 specifications to begin automated scope checking, discrepancy detection, and grounded Q&A.',
+  content: 'Lopri AI initialized. Elite construction technology assistant specializing in Division 26 specifications and electrical estimating. Inquiries cross-reference project specifications (Source A) and drawings/schedules (Source B) with clear electrical estimation risk analysis.',
   timestamp: new Date().toISOString(),
 };
+
+const initialDocsAsPdfs: PdfContextFile[] = SAMPLE_PROJECT.documents.map((d) => ({
+  id: d.id,
+  name: d.name,
+  size: d.fileSize,
+  category: d.category,
+  text: sanitizePdfText(d.pages.map((p) => p.text).join('\n\n')),
+  pages: d.pages,
+}));
 
 export const PdfProjectProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const [project, setProject] = useState<Project>(EMPTY_PROJECT);
   const [allProjects, setAllProjects] = useState<Project[]>([]);
   const [selectedFindingId, setSelectedFindingId] = useState<string | null>(null);
   
-  // Unified PDF Global State (Starts completely empty for clean SaaS user upload)
+  // Unified PDF Global State
   const [pdfFiles, setPdfFiles] = useState<PdfContextFile[]>([]);
   const [activePdfId, setActivePdfId] = useState<string | null>(null);
 
@@ -351,12 +360,12 @@ export const PdfProjectProvider: React.FC<{ children: React.ReactNode }> = ({ ch
 
   const resetWorkspace = useCallback(async () => {
     await apiClient.resetWorkspace();
-    setPdfFiles([]);
-    setActivePdfId(null);
+    setPdfFiles(initialDocsAsPdfs);
+    setActivePdfId(initialDocsAsPdfs[0]?.id || null);
     setChatMessages([INITIAL_WELCOME_MSG]);
-    setProject(EMPTY_PROJECT);
-    setAllProjects([]);
-    setSelectedFindingId(null);
+    setProject(SAMPLE_PROJECT);
+    setAllProjects([SAMPLE_PROJECT]);
+    setSelectedFindingId(SAMPLE_PROJECT.findings[0]?.id || null);
   }, []);
 
   const loadSampleDemo = useCallback(async () => {

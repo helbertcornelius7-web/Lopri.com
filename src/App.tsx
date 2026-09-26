@@ -101,8 +101,6 @@ function AppContent() {
         onOpenPipeline={() => setIsPipelineOpen(true)}
         onOpenExport={() => setIsExportOpen(true)}
         onResetDemo={resetWorkspace}
-        onLoadSampleDemo={loadSampleDemo}
-        onDeleteProject={deleteProject}
         onRunScopeCheck={handleRunScopeCheck}
         isAnalyzing={isAnalyzing}
         currentView={currentView}
