@@ -3,6 +3,7 @@ import { Project, Finding, ChatMessage, PdfContextFile, FindingStatus } from '..
 import { apiClient } from '../services/apiClient';
 import { extractPdfTextInBrowser } from '../services/clientScopeEngine';
 import { sanitizePdfText } from '../utils/sanitizePdfText';
+import { SAMPLE_PROJECT } from '../demoData';
 
 interface PdfProjectContextType {
   // Project & Findings state
@@ -62,29 +63,25 @@ const INITIAL_WELCOME_MSG: ChatMessage = {
   timestamp: new Date().toISOString(),
 };
 
-export const PdfProjectProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
-  const [project, setProject] = useState<Project>({
-    id: '',
-    name: 'Electrical Scope Project',
-    createdAt: new Date().toISOString(),
-    status: 'ready',
-    processingSteps: [
-      { id: '1', label: 'Documents uploaded', status: 'pending' },
-      { id: '2', label: 'PDF text extraction & OCR', status: 'pending' },
-      { id: '3', label: 'Sheets & schedules identified', status: 'pending' },
-      { id: '4', label: 'Specifications indexed', status: 'pending' },
-      { id: '5', label: 'Drawing + specification cross-check', status: 'pending' },
-    ],
-    documents: [],
-    findings: [],
-  });
+const initialDocsAsPdfs: PdfContextFile[] = SAMPLE_PROJECT.documents.map((d) => ({
+  id: d.id,
+  name: d.name,
+  size: d.fileSize,
+  category: d.category,
+  text: sanitizePdfText(d.pages.map((p) => p.text).join('\n\n')),
+  pages: d.pages,
+}));
 
-  const [allProjects, setAllProjects] = useState<Project[]>([]);
-  const [selectedFindingId, setSelectedFindingId] = useState<string | null>(null);
+export const PdfProjectProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
+  const [project, setProject] = useState<Project>(SAMPLE_PROJECT);
+  const [allProjects, setAllProjects] = useState<Project[]>([SAMPLE_PROJECT]);
+  const [selectedFindingId, setSelectedFindingId] = useState<string | null>(
+    SAMPLE_PROJECT.findings[0]?.id || null
+  );
   
   // Unified PDF Global State
-  const [pdfFiles, setPdfFiles] = useState<PdfContextFile[]>([]);
-  const [activePdfId, setActivePdfId] = useState<string | null>(null);
+  const [pdfFiles, setPdfFiles] = useState<PdfContextFile[]>(initialDocsAsPdfs);
+  const [activePdfId, setActivePdfId] = useState<string | null>(initialDocsAsPdfs[0]?.id || null);
 
   // Chat stream
   const [chatMessages, setChatMessages] = useState<ChatMessage[]>([INITIAL_WELCOME_MSG]);
@@ -339,20 +336,12 @@ export const PdfProjectProvider: React.FC<{ children: React.ReactNode }> = ({ ch
 
   const resetWorkspace = useCallback(async () => {
     await apiClient.resetWorkspace();
-    setPdfFiles([]);
-    setActivePdfId(null);
+    setPdfFiles(initialDocsAsPdfs);
+    setActivePdfId(initialDocsAsPdfs[0]?.id || null);
     setChatMessages([INITIAL_WELCOME_MSG]);
-    setProject({
-      id: '',
-      name: 'Empty Workspace',
-      createdAt: new Date().toISOString(),
-      status: 'ready',
-      processingSteps: [],
-      documents: [],
-      findings: [],
-    });
-    setAllProjects([]);
-    setSelectedFindingId(null);
+    setProject(SAMPLE_PROJECT);
+    setAllProjects([SAMPLE_PROJECT]);
+    setSelectedFindingId(SAMPLE_PROJECT.findings[0]?.id || null);
   }, []);
 
   const value = useMemo(

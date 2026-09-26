@@ -21,6 +21,7 @@ function AppContent() {
     project,
     setProject,
     allProjects,
+    loadProject,
     activeFinding,
     selectedFindingId,
     setSelectedFindingId,
@@ -88,8 +89,12 @@ function AppContent() {
       {/* Top Google AI Studio Header */}
       <StudioHeader
         project={project}
-        projectsList={allProjects}
-        onSelectProject={() => {}}
+        allProjects={allProjects}
+        onSelectProject={(id) => loadProject(id)}
+        isLeftOpen={isLeftOpen}
+        onToggleLeft={() => setIsLeftOpen((prev) => !prev)}
+        isRightOpen={isRightOpen}
+        onToggleRight={() => setIsRightOpen((prev) => !prev)}
         onOpenUpload={() => setIsUploadOpen(true)}
         onOpenPipeline={() => setIsPipelineOpen(true)}
         onOpenExport={() => setIsExportOpen(true)}

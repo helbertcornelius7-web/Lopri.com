@@ -6,6 +6,7 @@ import { createServer as createViteServer } from 'vite';
 import { GoogleGenAI, Type } from '@google/genai';
 import { Project, ProjectDocument, Finding, DocumentPage } from './src/types';
 import { sanitizePdfText } from './src/utils/sanitizePdfText';
+import { SAMPLE_PROJECT } from './src/demoData';
 
 const app = express();
 const PORT = 3000;
@@ -13,8 +14,10 @@ const PORT = 3000;
 app.use(express.json({ limit: '50mb' }));
 app.use(express.urlencoded({ extended: true, limit: '50mb' }));
 
-// In-memory project store starts completely empty (no demo files)
-const projectsStore: Map<string, Project> = new Map();
+// In-memory project store seeded with default sample electrical scope project
+const projectsStore: Map<string, Project> = new Map([
+  [SAMPLE_PROJECT.id, JSON.parse(JSON.stringify(SAMPLE_PROJECT))]
+]);
 
 // Unified In-memory PDF buffer store so Chat Stream retains full PDF context
 interface StoredPdfFile {
@@ -116,11 +119,12 @@ app.post('/api/projects', (req, res) => {
   res.status(201).json(newProject);
 });
 
-// 5. Clear all projects & workspace
+// 5. Reset workspace to sample project
 app.post('/api/projects/reset-demo', (req, res) => {
   projectsStore.clear();
   projectPdfBuffers.clear();
-  res.json({ message: 'Workspace cleared. No projects or documents uploaded.' });
+  projectsStore.set(SAMPLE_PROJECT.id, JSON.parse(JSON.stringify(SAMPLE_PROJECT)));
+  res.json({ message: 'Workspace reset to default sample project.', project: SAMPLE_PROJECT });
 });
 
 // 6. Upload PDF documents to project (supports both /upload and /documents endpoints)

@@ -38,19 +38,19 @@ interface StudioHeaderProps {
 
 export const StudioHeader: React.FC<StudioHeaderProps> = React.memo(({
   project,
-  allProjects,
-  onSelectProject,
-  isLeftOpen,
-  onToggleLeft,
-  isRightOpen,
-  onToggleRight,
+  allProjects = [],
+  onSelectProject = (_id: string) => {},
+  isLeftOpen = true,
+  onToggleLeft = () => {},
+  isRightOpen = true,
+  onToggleRight = () => {},
   onOpenUpload,
   onOpenPipeline,
   onOpenExport,
   onResetDemo,
   onRunScopeCheck,
-  isAnalyzing,
-  currentView,
+  isAnalyzing = false,
+  currentView = 'home',
   onChangeView,
 }) => {
   return (
@@ -105,7 +105,7 @@ export const StudioHeader: React.FC<StudioHeaderProps> = React.memo(({
         </div>
 
         {/* Breadcrumb separator & Project Selector Dropdown (only when projects exist) */}
-        {allProjects.length > 0 && (
+        {(allProjects || []).length > 0 && (
           <>
             <span className="text-slate-300 text-xs hidden md:inline">/</span>
             <div className="relative hidden sm:flex items-center gap-1.5 min-w-0">
@@ -114,7 +114,7 @@ export const StudioHeader: React.FC<StudioHeaderProps> = React.memo(({
                 onChange={(e) => onSelectProject(e.target.value)}
                 className="bg-slate-50 hover:bg-slate-100 text-slate-900 text-xs font-semibold rounded-md border border-slate-200 px-2.5 py-1 pr-6 focus:outline-none focus:ring-2 focus:ring-amber-500/20 focus:border-amber-500 cursor-pointer appearance-none truncate max-w-[140px] md:max-w-xs transition-colors"
               >
-                {allProjects.map((p) => (
+                {(allProjects || []).map((p) => (
                   <option key={p.id} value={p.id}>
                     {p.name}
                   </option>
