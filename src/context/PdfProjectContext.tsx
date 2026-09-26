@@ -5,6 +5,16 @@ import { extractPdfTextInBrowser } from '../services/clientScopeEngine';
 import { sanitizePdfText } from '../utils/sanitizePdfText';
 import { SAMPLE_PROJECT } from '../demoData';
 
+export const EMPTY_PROJECT: Project = {
+  id: '',
+  name: 'No Project Selected',
+  createdAt: new Date().toISOString(),
+  status: 'ready',
+  processingSteps: [],
+  documents: [],
+  findings: [],
+};
+
 interface PdfProjectContextType {
   // Project & Findings state
   project: Project;
@@ -37,6 +47,9 @@ interface PdfProjectContextType {
   ) => Promise<Project>;
   runScopeCheck: () => Promise<Project>;
   resetWorkspace: () => Promise<void>;
+  loadSampleDemo: () => Promise<void>;
+  deleteProject: (id: string) => Promise<void>;
+  createNewProject: (name?: string) => Project;
 }
 
 const PdfProjectContext = createContext<PdfProjectContextType | undefined>(undefined);
@@ -59,29 +72,18 @@ export function fileToBase64(file: File): Promise<string> {
 const INITIAL_WELCOME_MSG: ChatMessage = {
   id: 'msg-welcome',
   role: 'assistant',
-  content: 'Grounded Electrical Scope Assistant initialized. Ask any specification or drawing inquiry (e.g., "What is the panelboard bus material?" or "What are the feeder sizes for AHU-1?"). Every answer is grounded directly in the attached PDF document with exact citations.',
+  content: 'Welcome to Free Electrical Scope AI (SaaS Platform). Upload your electrical drawings (single-line diagrams, floor plans, panel schedules) and Division 26 specifications to begin automated scope checking, discrepancy detection, and grounded Q&A.',
   timestamp: new Date().toISOString(),
 };
 
-const initialDocsAsPdfs: PdfContextFile[] = SAMPLE_PROJECT.documents.map((d) => ({
-  id: d.id,
-  name: d.name,
-  size: d.fileSize,
-  category: d.category,
-  text: sanitizePdfText(d.pages.map((p) => p.text).join('\n\n')),
-  pages: d.pages,
-}));
-
 export const PdfProjectProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
-  const [project, setProject] = useState<Project>(SAMPLE_PROJECT);
-  const [allProjects, setAllProjects] = useState<Project[]>([SAMPLE_PROJECT]);
-  const [selectedFindingId, setSelectedFindingId] = useState<string | null>(
-    SAMPLE_PROJECT.findings[0]?.id || null
-  );
+  const [project, setProject] = useState<Project>(EMPTY_PROJECT);
+  const [allProjects, setAllProjects] = useState<Project[]>([]);
+  const [selectedFindingId, setSelectedFindingId] = useState<string | null>(null);
   
-  // Unified PDF Global State
-  const [pdfFiles, setPdfFiles] = useState<PdfContextFile[]>(initialDocsAsPdfs);
-  const [activePdfId, setActivePdfId] = useState<string | null>(initialDocsAsPdfs[0]?.id || null);
+  // Unified PDF Global State (Starts completely empty for clean SaaS user upload)
+  const [pdfFiles, setPdfFiles] = useState<PdfContextFile[]>([]);
+  const [activePdfId, setActivePdfId] = useState<string | null>(null);
 
   // Chat stream
   const [chatMessages, setChatMessages] = useState<ChatMessage[]>([INITIAL_WELCOME_MSG]);
@@ -137,10 +139,23 @@ export const PdfProjectProvider: React.FC<{ children: React.ReactNode }> = ({ ch
               return match?.base64 ? { ...doc, base64: match.base64 } : doc;
             });
           });
+          if (docsAsPdfs.length > 0) {
+            setActivePdfId(docsAsPdfs[0].id);
+          }
         }
+      } else {
+        // Clean SaaS state: wait for user to upload their project
+        setProject(EMPTY_PROJECT);
+        setPdfFiles([]);
+        setActivePdfId(null);
+        setSelectedFindingId(null);
       }
     } catch (err) {
       console.warn('Could not load initial projects:', err);
+      setProject(EMPTY_PROJECT);
+      setPdfFiles([]);
+      setActivePdfId(null);
+      setSelectedFindingId(null);
     }
   }, []);
 
@@ -336,12 +351,77 @@ export const PdfProjectProvider: React.FC<{ children: React.ReactNode }> = ({ ch
 
   const resetWorkspace = useCallback(async () => {
     await apiClient.resetWorkspace();
-    setPdfFiles(initialDocsAsPdfs);
-    setActivePdfId(initialDocsAsPdfs[0]?.id || null);
+    setPdfFiles([]);
+    setActivePdfId(null);
     setChatMessages([INITIAL_WELCOME_MSG]);
-    setProject(SAMPLE_PROJECT);
-    setAllProjects([SAMPLE_PROJECT]);
-    setSelectedFindingId(SAMPLE_PROJECT.findings[0]?.id || null);
+    setProject(EMPTY_PROJECT);
+    setAllProjects([]);
+    setSelectedFindingId(null);
+  }, []);
+
+  const loadSampleDemo = useCallback(async () => {
+    const sample = await apiClient.loadSampleDemo();
+    setProject(sample);
+    setAllProjects((prev) => [sample, ...prev.filter((p) => p.id !== sample.id)]);
+    if (sample.findings.length > 0) {
+      setSelectedFindingId(sample.findings[0].id);
+    }
+    const docsAsPdfs: PdfContextFile[] = sample.documents.map((d) => ({
+      id: d.id,
+      name: d.name,
+      size: d.fileSize,
+      category: d.category,
+      text: sanitizePdfText(d.pages.map((p) => p.text).join('\n\n')),
+      pages: d.pages,
+    }));
+    setPdfFiles(docsAsPdfs);
+    if (docsAsPdfs.length > 0) {
+      setActivePdfId(docsAsPdfs[0].id);
+    }
+    setChatMessages([
+      {
+        id: 'msg-demo-' + Date.now(),
+        role: 'assistant',
+        content: 'Sample Electrical Scope Project loaded (Division 26 Specifications & Drawing Sheets). You can inspect identified scope gaps, verify citations, or run questions.',
+        timestamp: new Date().toISOString(),
+      },
+    ]);
+  }, []);
+
+  const deleteProject = useCallback(async (projectId: string) => {
+    await apiClient.deleteProject(projectId);
+    setAllProjects((prev) => {
+      const updated = prev.filter((p) => p.id !== projectId);
+      if (project.id === projectId) {
+        if (updated.length > 0) {
+          loadProject(updated[0].id);
+        } else {
+          setProject(EMPTY_PROJECT);
+          setPdfFiles([]);
+          setActivePdfId(null);
+          setSelectedFindingId(null);
+        }
+      }
+      return updated;
+    });
+  }, [loadProject, project.id]);
+
+  const createNewProject = useCallback((name = 'New Electrical Project') => {
+    const id = 'proj-' + Date.now();
+    const newProj: Project = {
+      id,
+      name,
+      createdAt: new Date().toISOString(),
+      status: 'ready',
+      processingSteps: [],
+      documents: [],
+      findings: [],
+    };
+    setProject(newProj);
+    setPdfFiles([]);
+    setActivePdfId(null);
+    setSelectedFindingId(null);
+    return newProj;
   }, []);
 
   const value = useMemo(
@@ -366,6 +446,9 @@ export const PdfProjectProvider: React.FC<{ children: React.ReactNode }> = ({ ch
       uploadPdfFiles,
       runScopeCheck,
       resetWorkspace,
+      loadSampleDemo,
+      deleteProject,
+      createNewProject,
     }),
     [
       project,
@@ -385,6 +468,9 @@ export const PdfProjectProvider: React.FC<{ children: React.ReactNode }> = ({ ch
       uploadPdfFiles,
       runScopeCheck,
       resetWorkspace,
+      loadSampleDemo,
+      deleteProject,
+      createNewProject,
     ]
   );
 

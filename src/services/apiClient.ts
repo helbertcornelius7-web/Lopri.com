@@ -23,7 +23,7 @@ export const apiClient = {
         const res = await fetch('/api/projects');
         if (res.ok) {
           const serverProjects = await res.json();
-          if (Array.isArray(serverProjects) && serverProjects.length > 0) {
+          if (Array.isArray(serverProjects)) {
             return serverProjects;
           }
         }
@@ -421,13 +421,48 @@ export const apiClient = {
     };
   },
 
-  // 9. Reset workspace
+  // 9. Reset workspace (wipes all projects for clean slate)
   async resetWorkspace(): Promise<void> {
-    try {
-      await fetch('/api/projects/reset-demo', { method: 'POST' });
-    } catch (e) {
-      // Ignore
+    if (!isVercel) {
+      try {
+        await fetch('/api/projects/reset-demo', { method: 'POST' });
+      } catch (e) {
+        // Ignore
+      }
     }
     saveLocalProjects([]);
+  },
+
+  // 10. Load optional sample demo project on demand
+  async loadSampleDemo(): Promise<Project> {
+    if (!isVercel) {
+      try {
+        const res = await fetch('/api/projects/load-sample', { method: 'POST' });
+        if (res.ok) {
+          const sample = await res.json();
+          saveLocalProject(sample);
+          return sample;
+        }
+      } catch (e) {
+        console.warn('Backend load-sample error, using local demo data:', e);
+      }
+    }
+    // Fallback using SAMPLE_PROJECT from demoData
+    const { SAMPLE_PROJECT } = await import('../demoData');
+    saveLocalProject(SAMPLE_PROJECT);
+    return SAMPLE_PROJECT;
+  },
+
+  // 11. Delete project
+  async deleteProject(projectId: string): Promise<void> {
+    if (!isVercel) {
+      try {
+        await fetch(`/api/projects/${projectId}`, { method: 'DELETE' });
+      } catch (e) {
+        console.warn('Backend delete project error:', e);
+      }
+    }
+    const locals = getLocalProjects().filter((p) => p.id !== projectId);
+    saveLocalProjects(locals);
   },
 };

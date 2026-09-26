@@ -34,6 +34,8 @@ function AppContent() {
     sendChatMessage,
     runScopeCheck,
     resetWorkspace,
+    loadSampleDemo,
+    deleteProject,
   } = usePdfProject();
 
   // Active Main View: 'home' matches the Google AI Studio Build Home
@@ -99,6 +101,8 @@ function AppContent() {
         onOpenPipeline={() => setIsPipelineOpen(true)}
         onOpenExport={() => setIsExportOpen(true)}
         onResetDemo={resetWorkspace}
+        onLoadSampleDemo={loadSampleDemo}
+        onDeleteProject={deleteProject}
         onRunScopeCheck={handleRunScopeCheck}
         isAnalyzing={isAnalyzing}
         currentView={currentView}

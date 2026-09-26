@@ -14,10 +14,8 @@ const PORT = 3000;
 app.use(express.json({ limit: '50mb' }));
 app.use(express.urlencoded({ extended: true, limit: '50mb' }));
 
-// In-memory project store seeded with default sample electrical scope project
-const projectsStore: Map<string, Project> = new Map([
-  [SAMPLE_PROJECT.id, JSON.parse(JSON.stringify(SAMPLE_PROJECT))]
-]);
+// In-memory project store for user-uploaded projects (clean SaaS slate)
+const projectsStore: Map<string, Project> = new Map();
 
 // Unified In-memory PDF buffer store so Chat Stream retains full PDF context
 interface StoredPdfFile {
@@ -119,12 +117,26 @@ app.post('/api/projects', (req, res) => {
   res.status(201).json(newProject);
 });
 
-// 5. Reset workspace to sample project
+// 5. Reset workspace (clears all uploaded projects for fresh SaaS state)
 app.post('/api/projects/reset-demo', (req, res) => {
   projectsStore.clear();
   projectPdfBuffers.clear();
-  projectsStore.set(SAMPLE_PROJECT.id, JSON.parse(JSON.stringify(SAMPLE_PROJECT)));
-  res.json({ message: 'Workspace reset to default sample project.', project: SAMPLE_PROJECT });
+  res.json({ message: 'Workspace cleared successfully.' });
+});
+
+// 5b. Load optional sample demo project on demand
+app.post('/api/projects/load-sample', (req, res) => {
+  const sample = JSON.parse(JSON.stringify(SAMPLE_PROJECT));
+  projectsStore.set(sample.id, sample);
+  res.status(201).json(sample);
+});
+
+// 5c. Delete project
+app.delete('/api/projects/:id', (req, res) => {
+  const { id } = req.params;
+  projectsStore.delete(id);
+  projectPdfBuffers.delete(id);
+  res.json({ success: true, message: 'Project deleted' });
 });
 
 // 6. Upload PDF documents to project (supports both /upload and /documents endpoints)

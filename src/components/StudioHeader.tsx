@@ -15,7 +15,9 @@ import {
   Play,
   Settings,
   Terminal,
-  LayoutGrid
+  LayoutGrid,
+  Plus,
+  Trash2
 } from 'lucide-react';
 
 interface StudioHeaderProps {
@@ -30,6 +32,8 @@ interface StudioHeaderProps {
   onOpenPipeline: () => void;
   onOpenExport: () => void;
   onResetDemo: () => void;
+  onLoadSampleDemo?: () => void;
+  onDeleteProject?: (id: string) => void;
   onRunScopeCheck: () => void;
   isAnalyzing: boolean;
   currentView: 'home' | 'playground' | 'history' | 'gallery';
@@ -48,6 +52,8 @@ export const StudioHeader: React.FC<StudioHeaderProps> = React.memo(({
   onOpenPipeline,
   onOpenExport,
   onResetDemo,
+  onLoadSampleDemo,
+  onDeleteProject,
   onRunScopeCheck,
   isAnalyzing = false,
   currentView = 'home',
@@ -104,14 +110,23 @@ export const StudioHeader: React.FC<StudioHeaderProps> = React.memo(({
           </button>
         </div>
 
-        {/* Breadcrumb separator & Project Selector Dropdown (only when projects exist) */}
-        {(allProjects || []).length > 0 && (
+        {/* Breadcrumb separator & Project Selector / New Project CTA */}
+        {(allProjects || []).length > 0 ? (
           <>
             <span className="text-slate-300 text-xs hidden md:inline">/</span>
             <div className="relative hidden sm:flex items-center gap-1.5 min-w-0">
               <select
                 value={project.id || ''}
-                onChange={(e) => onSelectProject(e.target.value)}
+                onChange={(e) => {
+                  const val = e.target.value;
+                  if (val === '__NEW__') {
+                    onOpenUpload();
+                  } else if (val === '__DEMO__') {
+                    onLoadSampleDemo?.();
+                  } else {
+                    onSelectProject(val);
+                  }
+                }}
                 className="bg-slate-50 hover:bg-slate-100 text-slate-900 text-xs font-semibold rounded-md border border-slate-200 px-2.5 py-1 pr-6 focus:outline-none focus:ring-2 focus:ring-amber-500/20 focus:border-amber-500 cursor-pointer appearance-none truncate max-w-[140px] md:max-w-xs transition-colors"
               >
                 {(allProjects || []).map((p) => (
@@ -119,8 +134,49 @@ export const StudioHeader: React.FC<StudioHeaderProps> = React.memo(({
                     {p.name}
                   </option>
                 ))}
+                <option disabled>──────────</option>
+                <option value="__NEW__">+ New Project...</option>
+                <option value="__DEMO__">Explore Sample Demo...</option>
               </select>
               <ChevronDown className="w-3 h-3 text-slate-400 pointer-events-none absolute right-2 top-1/2 -translate-y-1/2" />
+            </div>
+
+            {project.id && onDeleteProject && (
+              <button
+                type="button"
+                onClick={() => {
+                  if (confirm(`Delete project "${project.name}"?`)) {
+                    onDeleteProject(project.id);
+                  }
+                }}
+                className="p-1 rounded text-slate-400 hover:text-rose-600 hover:bg-rose-50 transition-colors hidden sm:inline"
+                title="Delete this project"
+              >
+                <Trash2 className="w-3.5 h-3.5" />
+              </button>
+            )}
+          </>
+        ) : (
+          <>
+            <span className="text-slate-300 text-xs hidden md:inline">/</span>
+            <div className="hidden sm:flex items-center gap-1.5">
+              <button
+                type="button"
+                onClick={onOpenUpload}
+                className="text-xs font-semibold text-amber-700 hover:text-amber-800 bg-amber-50 hover:bg-amber-100/80 px-2.5 py-1 rounded-md border border-amber-200 transition-colors flex items-center gap-1 cursor-pointer"
+              >
+                <Plus className="w-3.5 h-3.5" />
+                <span>New Project</span>
+              </button>
+              {onLoadSampleDemo && (
+                <button
+                  type="button"
+                  onClick={onLoadSampleDemo}
+                  className="text-xs text-slate-500 hover:text-slate-800 px-2 py-1 rounded-md hover:bg-slate-100 transition-colors hidden lg:inline"
+                >
+                  Load Demo
+                </button>
+              )}
             </div>
           </>
         )}
