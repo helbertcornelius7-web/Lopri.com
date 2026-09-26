@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { Project, Finding, FindingStatus, ChatMessage } from '../types';
+import { Project, Finding, FindingStatus, ChatMessage, PdfContextFile } from '../types';
 import { 
   Sparkles, 
   ChevronDown, 
@@ -18,7 +18,8 @@ import {
   AlertTriangle,
   AlertCircle,
   HelpCircle,
-  MessageSquare
+  MessageSquare,
+  FileCheck2
 } from 'lucide-react';
 
 interface StudioCanvasProps {
@@ -32,6 +33,8 @@ interface StudioCanvasProps {
   chatMessages: ChatMessage[];
   onSendMessage: (query: string) => Promise<void>;
   isChatLoading: boolean;
+  activePdf?: PdfContextFile | null;
+  pdfFiles?: PdfContextFile[];
 }
 
 export const StudioCanvas: React.FC<StudioCanvasProps> = React.memo(({
@@ -45,6 +48,8 @@ export const StudioCanvas: React.FC<StudioCanvasProps> = React.memo(({
   chatMessages,
   onSendMessage,
   isChatLoading,
+  activePdf,
+  pdfFiles = [],
 }) => {
   const [isSystemPromptOpen, setIsSystemPromptOpen] = useState(false);
   const [promptInput, setPromptInput] = useState('');
@@ -353,8 +358,14 @@ export const StudioCanvas: React.FC<StudioCanvasProps> = React.memo(({
         {/* Conversational Turns / Prompt Queries Stream */}
         {chatMessages.length > 0 && (
           <div className="space-y-4 pt-3 border-t border-slate-200/80">
-            <div className="text-[11px] font-bold uppercase tracking-wider text-slate-400 px-1">
-              Grounded Inquiries Stream ({chatMessages.length})
+            <div className="flex items-center justify-between px-1">
+              <div className="text-[11px] font-bold uppercase tracking-wider text-slate-400">
+                Grounded Inquiries Stream ({chatMessages.length})
+              </div>
+              <div className="flex items-center gap-1.5 text-[10px] font-medium text-emerald-700 bg-emerald-50 px-2.5 py-0.5 rounded-full border border-emerald-200">
+                <FileCheck2 className="w-3 h-3 text-emerald-600 shrink-0" />
+                <span>PDF Context: {activePdf?.name || (pdfFiles.length > 0 ? pdfFiles[0].name : 'Active Specifications')}</span>
+              </div>
             </div>
 
             {chatMessages.map((msg) => (

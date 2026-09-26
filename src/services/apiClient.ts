@@ -6,6 +6,7 @@ import {
   extractPdfTextInBrowser, 
   runClientSideCrossCheck 
 } from './clientScopeEngine';
+import { sanitizePdfText } from '../utils/sanitizePdfText';
 
 // Detect if running in static Vercel frontend or serverless environment without active Node server
 const isVercel = typeof window !== 'undefined' && (
@@ -288,23 +289,46 @@ export const apiClient = {
     }
   },
 
-  // 8. Chat with project
-  async chatWithProject(projectId: string, query: string): Promise<ChatMessage> {
+  // 8. Chat with project - passes user prompt and PDF base64 context
+  async chatWithProject(projectId: string, query: string, pdfBase64?: string): Promise<ChatMessage> {
+    const payload = {
+      userPrompt: query,
+      question: query,
+      prompt: query,
+      query,
+      projectId,
+      pdfBase64,
+    };
+
     try {
-      const res = await fetch(`/api/projects/${projectId}/chat`, {
+      let res = await fetch(`/api/projects/${projectId}/chat`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ question: query, query }),
+        body: JSON.stringify(payload),
       });
+
+      if (!res.ok && res.status === 404) {
+        // Fall back to root /api/chat endpoint
+        res = await fetch('/api/chat', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload),
+        });
+      }
 
       if (res.ok) {
         const data = await res.json();
         return {
           id: 'msg-' + Date.now(),
           role: 'assistant',
-          content: data.content,
+          content: sanitizePdfText(data.content || ''),
           timestamp: new Date().toISOString(),
-          citations: data.citations || [],
+          citations: (data.citations || []).map((c: any) => ({
+            documentName: c.documentName,
+            sheetOrSection: c.sheetOrSection,
+            pageNumber: c.pageNumber,
+            quote: sanitizePdfText(c.quote || ''),
+          })),
           notEnoughInfo: data.notEnoughInfo,
         };
       }
@@ -326,36 +350,63 @@ export const apiClient = {
       };
     }
 
-    const citations: Array<{ documentName: string; sheetOrSection?: string; pageNumber: number; quote: string }> = [];
+    // Search for keywords and technical terms
+    const technicalTerms = qLower
+      .replace(/[^\w\s-]/g, ' ')
+      .split(/\s+/)
+      .filter((w) => w.length >= 2 && !['what', 'where', 'which', 'does', 'have', 'from', 'with', 'about', 'this', 'that', 'they', 'when'].includes(w));
 
-    // Search for keywords
-    const keywords = qLower.split(/\s+/).filter(w => w.length > 3);
+    const scoredPages: Array<{
+      documentName: string;
+      sheetOrSection?: string;
+      pageNumber: number;
+      quote: string;
+      score: number;
+    }> = [];
 
     current.documents.forEach((doc) => {
       doc.pages.forEach((page) => {
         const textLower = page.text.toLowerCase();
-        const hasMatch = keywords.some(k => textLower.includes(k));
-        if (citations.length < 3 && hasMatch) {
-          const matchWord = keywords.find(k => textLower.includes(k)) || '';
+        let score = 0;
+        technicalTerms.forEach((t) => {
+          if (textLower.includes(t)) {
+            score += /copper|bussing|bus|panelboard|generator|feeder|26\s*24\s*16/i.test(t) ? 5 : 2;
+          }
+        });
+
+        if (score > 0) {
+          const matchWord = technicalTerms.find((t) => textLower.includes(t)) || '';
           const idx = textLower.indexOf(matchWord);
-          const snippet = page.text.slice(Math.max(0, idx - 40), Math.min(page.text.length, idx + 140)).replace(/\n/g, ' ').trim();
-          citations.push({
+          const snippet = sanitizePdfText(page.text.slice(Math.max(0, idx - 40), Math.min(page.text.length, idx + 160)))
+            .replace(/\n+/g, ' ')
+            .trim();
+
+          scoredPages.push({
             documentName: doc.name,
             sheetOrSection: page.sheetOrSection || `Section 26`,
             pageNumber: page.pageNumber,
             quote: snippet,
+            score,
           });
         }
       });
     });
 
-    if (citations.length > 0) {
+    scoredPages.sort((a, b) => b.score - a.score);
+
+    if (scoredPages.length > 0) {
+      const top = scoredPages[0];
       return {
         id: 'msg-' + Date.now(),
         role: 'assistant',
-        content: `According to project document references regarding "${query}":\n\n"${citations[0].quote}"`,
+        content: sanitizePdfText(`According to project document references regarding "${query}":\n\n"${top.quote}"`),
         timestamp: new Date().toISOString(),
-        citations,
+        citations: scoredPages.slice(0, 3).map((p) => ({
+          documentName: p.documentName,
+          sheetOrSection: p.sheetOrSection,
+          pageNumber: p.pageNumber,
+          quote: p.quote,
+        })),
         notEnoughInfo: false,
       };
     }

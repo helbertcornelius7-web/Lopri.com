@@ -92,3 +92,13 @@ export interface ChatMessage {
   }>;
   notEnoughInfo?: boolean;
 }
+
+export interface PdfContextFile {
+  id: string;
+  name: string;
+  size: number;
+  category: 'drawing' | 'specification';
+  base64?: string;
+  text: string;
+  pages: DocumentPage[];
+}

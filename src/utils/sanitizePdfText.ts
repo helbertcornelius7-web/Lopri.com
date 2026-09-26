@@ -1,44 +1,94 @@
 /**
  * PDF Text Sanitization Utility
  * Purges Mojibake, corrupted CID font glyphs, binary stream noise,
- * and unmapped control characters while preserving legitimate engineering text,
- * technical notations, and electrical symbols.
+ * and non-printable ASCII artifacts (e.g., 'YA jœu.uuu1~y') while preserving
+ * legitimate engineering text, technical notations, and electrical symbols.
  */
 
-// Permitted engineering and construction symbols:
+// Permitted engineering and technical symbols:
 // Ω (Ohms), µ/μ (Micro), ° (Degree), ± (Plus-minus), Ø/ø/Φ (Diameter/Phase),
-// ² (Square), ³ (Cubic), • (Bullet), ™, ®, ©, —, –, “, ”, ‘, ’, ✓
-const ALLOWED_SYMBOLS_REGEX = /[\u03A9\u00B5\u03BC\u00B0\u00B1\u00D8\u00F8\u03A6\u03C6\u00B2\u00B3\u2022\u2122\u00AE\u00A9\u2014\u2013\u201C\u201D\u2018\u2019\u2713\u2190-\u2195]/;
+// ² (Square), ³ (Cubic), • (Bullet), ™, ®, ©, —, –, “, ”, ‘, ’, ✓, Δ (Delta), etc.
+const ALLOWED_ENGINEERING_SYMBOLS = /[\u03A9\u00B5\u03BC\u00B0\u00B1\u00D8\u00F8\u03A6\u03C6\u00B2\u00B3\u2022\u2122\u00AE\u00A9\u2014\u2013\u201C\u201D\u2018\u2019\u2713\u0394\u03B4\u2190-\u2195]/;
+
+/**
+ * Common double-encoded UTF-8 Mojibake sequences to direct ASCII/Unicode equivalents.
+ */
+const MOJIBAKE_MAP: Array<[RegExp, string]> = [
+  [/â€™/g, "'"],
+  [/â€˜/g, "'"],
+  [/â€œ/g, '"'],
+  [/â€/g, '"'],
+  [/â€“/g, '–'],
+  [/â€”/g, '—'],
+  [/â€¦/g, '...'],
+  [/Â°/g, '°'],
+  [/Â±/g, '±'],
+  [/Âµ/g, 'µ'],
+  [/Â©/g, '©'],
+  [/Â®/g, '®'],
+  [/Ã©/g, 'é'],
+  [/Ã¨/g, 'è'],
+  [/Ã /g, 'à'],
+  [/Ã§/g, 'ç'],
+  [/Ã±/g, 'ñ'],
+  [/Ã³/g, 'ó'],
+  [/Ã­/g, 'í'],
+  [/Ãº/g, 'ú'],
+  [/Ã¼/g, 'ü'],
+  [/Ã¶/g, 'ö'],
+  [/Ã¤/g, 'ä'],
+];
 
 /**
  * Checks if a character is a valid printable character for technical documents.
  */
 function isPrintableOrTechnical(char: string, code: number): boolean {
-  // Line feeds, tabs, carriage returns
-  if (code === 9 || code === 10 || code === 13) return true;
+  // Whitespace (tab, newline, carriage return, space)
+  if (code === 9 || code === 10 || code === 13 || code === 32) return true;
 
-  // Standard printable ASCII (space through tilde)
-  if (code >= 32 && code <= 126) return true;
+  // Standard printable ASCII (exclamation point through tilde: 33 - 126)
+  if (code >= 33 && code <= 126) return true;
 
-  // Common Latin-1 supplement (accented letters, fractions, etc.)
-  if (code >= 160 && code <= 255) return true;
-
-  // Allowed specific engineering symbols
-  return ALLOWED_SYMBOLS_REGEX.test(char);
+  // Allowed specific engineering and scientific symbols
+  return ALLOWED_ENGINEERING_SYMBOLS.test(char);
 }
 
 /**
- * Tests if a word token resembles binary noise or corrupted CID glyphs.
- * E.g., tokens like "jœu.uuu1~y", "%ODÙ5É:-Œ", or high ratio of punctuation to letters.
+ * Tests if an individual token is corrupted font noise or a Mojibake artifact.
+ * Examples of noise:
+ * - "YA" (when adjacent to noise)
+ * - "jœu.uuu1~y"
+ * - "(cid:142)"
+ * - "%ODÙ5É:-Œ"
+ * - "~~y"
  */
-function isGarbageToken(token: string): boolean {
-  if (token.length <= 1) return false;
+function isCorruptedToken(token: string): boolean {
+  if (!token || token.length === 0) return true;
 
-  // Catch unmapped CID font artifacts like (cid:123)
+  // Preserve short tokens like numbers, standard abbreviations, electrical symbols
+  if (token.length <= 1) {
+    const code = token.charCodeAt(0);
+    return !isPrintableOrTechnical(token, code);
+  }
+
+  // Unmapped CID font artifacts: (cid:123), cid:45
   if (/^\(?cid:\d+\)?$/i.test(token)) return true;
 
-  // If word has excessive non-alphanumeric/non-symbol characters
-  let readableCount = 0;
+  // Repeating binary junk: "~~~~", "####", "-----"
+  if (/^([^\w\s])\1{3,}$/.test(token)) return true;
+
+  // Obvious Mojibake characters like œ, Œ, æ, Æ, ð, Ð, ø, Ø, þ, Þ, ß mixed with noise
+  if (/[œŒæÆðÐøØþÞß]/.test(token)) {
+    return true;
+  }
+
+  // Tokens containing tildes inside words or at ends: e.g. "uuu1~y", "~y"
+  if (/\w+~\w*/.test(token) || /~\w+/.test(token)) {
+    return true;
+  }
+
+  // Count printable alphanumeric characters vs obscure symbols
+  let validCharCount = 0;
   for (let i = 0; i < token.length; i++) {
     const char = token[i];
     const code = token.charCodeAt(i);
@@ -46,19 +96,14 @@ function isGarbageToken(token: string): boolean {
       (code >= 48 && code <= 57) || // 0-9
       (code >= 65 && code <= 90) || // A-Z
       (code >= 97 && code <= 122) || // a-z
-      ALLOWED_SYMBOLS_REGEX.test(char)
+      ALLOWED_ENGINEERING_SYMBOLS.test(char)
     ) {
-      readableCount++;
+      validCharCount++;
     }
   }
 
-  // If token is longer than 4 chars and less than 40% alphanumeric/valid symbols, it's noise
-  if (token.length >= 4 && readableCount / token.length < 0.45) {
-    return true;
-  }
-
-  // Catch repeating binary symbols (e.g. "~~~~~" or "")
-  if (/([\W_])\1{3,}/.test(token)) {
+  // If token is longer than 3 characters and has less than 45% valid characters, it's noise
+  if (token.length >= 4 && validCharCount / token.length < 0.45) {
     return true;
   }
 
@@ -66,20 +111,34 @@ function isGarbageToken(token: string): boolean {
 }
 
 /**
- * Purges Mojibake and sanitizes extracted PDF text for UI display and RAG context.
+ * Sanitizes extracted PDF text for UI display, vector context, and LLM Q&A prompts.
+ * Strips out Mojibake, corrupted font artifacts, and non-printable control characters.
  *
- * @param rawText Unprocessed string extracted from PDF parser
+ * @param text Unprocessed raw string from PDF text extraction
  * @returns Cleaned, human-readable UTF-8 string
  */
-export function sanitizePdfText(rawText: string | null | undefined): string {
-  if (!rawText) return '';
+export function sanitizePdfText(text: string | null | undefined): string {
+  if (!text || typeof text !== 'string') return '';
 
-  // 1. Remove raw null bytes, backspaces, form feeds, and non-printable control chars (except \n, \r, \t)
-  let clean = rawText
+  // 1. Remove non-printable control characters & null bytes (except \t, \n, \r)
+  let clean = text
     .replace(/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F-\x9F]/g, ' ')
-    .replace(/\uFFFD/g, ' '); // Strip replacement character 
+    .replace(/\uFFFD/g, ' ') // Replacement character 
+    .replace(/\uFEFF/g, ''); // Zero-width no-break space (BOM)
 
-  // 2. Normalize common PDF ligatures
+  // 2. Remove common corrupted font / Mojibake artifact clusters (e.g., 'YA jœu.uuu1~y', '(cid:142)')
+  clean = clean
+    .replace(/\b[A-Z]{1,2}\s+[A-Za-z]*[œŒæÆ][A-Za-z0-9.~-]*\b/g, '') // Strips 'YA jœu.uuu1~y'
+    .replace(/[A-Za-z0-9]*[œŒæÆ][A-Za-z0-9.~-]*/g, '')
+    .replace(/\(?cid:\d+\)?/gi, '')
+    .replace(/\b\w*~\w*\b/g, '');
+
+  // 3. Decode known double-encoded UTF-8 Mojibake sequences
+  for (const [regex, replacement] of MOJIBAKE_MAP) {
+    clean = clean.replace(regex, replacement);
+  }
+
+  // 4. Normalize common PDF typography ligatures
   clean = clean
     .replace(/\uFB00/g, 'ff')
     .replace(/\uFB01/g, 'fi')
@@ -89,47 +148,51 @@ export function sanitizePdfText(rawText: string | null | undefined): string {
     .replace(/\uFB05/g, 'ft')
     .replace(/\uFB06/g, 'st');
 
-  // 3. Filter characters based on strict whitelist/bounds
-  const charArray: string[] = [];
+  // 5. Filter characters character-by-character to eliminate any remaining unprintable bytes
+  const filteredChars: string[] = [];
   for (let i = 0; i < clean.length; i++) {
     const char = clean[i];
     const code = clean.charCodeAt(i);
     if (isPrintableOrTechnical(char, code)) {
-      charArray.push(char);
+      filteredChars.push(char);
     } else {
-      charArray.push(' ');
+      filteredChars.push(' ');
     }
   }
-  clean = charArray.join('');
+  clean = filteredChars.join('');
 
-  // 4. Line by line processing to remove binary noise tokens and empty lines
+  // 6. Line-by-line token sanitization to eliminate any remaining corrupted tokens
   const lines = clean.split(/\r?\n/);
   const sanitizedLines: string[] = [];
 
   for (const line of lines) {
-    const trimmed = line.trim();
-    if (!trimmed) continue;
+    const trimmedLine = line.trim();
+    if (!trimmedLine) continue;
 
-    const tokens = trimmed.split(/\s+/);
+    const tokens = trimmedLine.split(/\s+/);
     const validTokens: string[] = [];
 
     for (const token of tokens) {
-      if (!isGarbageToken(token)) {
+      if (!isCorruptedToken(token)) {
         validTokens.push(token);
       }
     }
 
-    // Only keep line if it has legitimate content
-    const processedLine = validTokens.join(' ');
-    if (processedLine.length > 2) {
-      sanitizedLines.push(processedLine);
+    if (validTokens.length > 0) {
+      const reconstructed = validTokens.join(' ');
+      // Retain lines that contain meaningful content
+      if (/[A-Za-z0-9]/.test(reconstructed) || ALLOWED_ENGINEERING_SYMBOLS.test(reconstructed)) {
+        sanitizedLines.push(reconstructed);
+      }
     }
   }
 
-  // 5. Clean up multiple consecutive spaces & excessive blank lines
+  // 7. Normalize whitespace: collapse consecutive spaces & excessive blank lines
   return sanitizedLines
     .join('\n')
     .replace(/[ \t]{2,}/g, ' ')
     .replace(/\n{3,}/g, '\n\n')
     .trim();
 }
+
+export default sanitizePdfText;

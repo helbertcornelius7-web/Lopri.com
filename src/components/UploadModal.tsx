@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { Project } from '../types';
 import { apiClient } from '../services/apiClient';
+import { usePdfProject } from '../context/PdfProjectContext';
 import { 
   Upload, 
   X, 
@@ -23,6 +24,7 @@ export const UploadModal: React.FC<UploadModalProps> = ({
   onClose,
   onUploadSuccess,
 }) => {
+  const { uploadPdfFiles } = usePdfProject();
   const [projectName, setProjectName] = useState('');
   const [selectedFiles, setSelectedFiles] = useState<File[]>([]);
   const [categories, setCategories] = useState<Record<string, 'drawing' | 'specification'>>({});
@@ -94,21 +96,13 @@ export const UploadModal: React.FC<UploadModalProps> = ({
     setUploadError(null);
 
     try {
-      // 1. Create project via resilient apiClient
-      const projectData = await apiClient.createProject(
-        projectName,
-        `Custom upload with ${selectedFiles.length} documents.`
-      );
-
-      // 2. Upload and extract documents
-      const uploadedProject = await apiClient.uploadDocuments(
-        projectData.id,
+      // Upload through global PDF state to store base64 buffer in memory
+      // and immediately hydrate Scope Review Canvas and Grounded Inquiries Stream
+      const analyzedProject = await uploadPdfFiles(
         selectedFiles,
-        categories
+        categories,
+        projectName || undefined
       );
-
-      // 3. Trigger cross-check analysis
-      const analyzedProject = await apiClient.analyzeProject(uploadedProject.id);
 
       onUploadSuccess(analyzedProject);
       onClose();

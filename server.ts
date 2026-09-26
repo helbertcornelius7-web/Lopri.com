@@ -5,6 +5,7 @@ import { PDFParse } from 'pdf-parse';
 import { createServer as createViteServer } from 'vite';
 import { GoogleGenAI, Type } from '@google/genai';
 import { Project, ProjectDocument, Finding, DocumentPage } from './src/types';
+import { sanitizePdfText } from './src/utils/sanitizePdfText';
 
 const app = express();
 const PORT = 3000;
@@ -14,6 +15,17 @@ app.use(express.urlencoded({ extended: true, limit: '50mb' }));
 
 // In-memory project store starts completely empty (no demo files)
 const projectsStore: Map<string, Project> = new Map();
+
+// Unified In-memory PDF buffer store so Chat Stream retains full PDF context
+interface StoredPdfFile {
+  name: string;
+  size: number;
+  category: 'drawing' | 'specification';
+  buffer: Buffer;
+  base64: string;
+  mimeType: string;
+}
+const projectPdfBuffers: Map<string, StoredPdfFile[]> = new Map();
 
 // Multer storage for PDF uploads
 const upload = multer({
@@ -107,6 +119,7 @@ app.post('/api/projects', (req, res) => {
 // 5. Clear all projects & workspace
 app.post('/api/projects/reset-demo', (req, res) => {
   projectsStore.clear();
+  projectPdfBuffers.clear();
   res.json({ message: 'Workspace cleared. No projects or documents uploaded.' });
 });
 
@@ -134,6 +147,12 @@ const handleDocumentUpload = async (req: express.Request, res: express.Response)
       }
     } catch (e) {}
 
+    // Ensure storage for this project exists
+    if (!projectPdfBuffers.has(project.id)) {
+      projectPdfBuffers.set(project.id, []);
+    }
+    const pdfStoreList = projectPdfBuffers.get(project.id)!;
+
     for (let i = 0; i < files.length; i++) {
       const file = files[i];
       const originalName = file.originalname;
@@ -150,6 +169,16 @@ const handleDocumentUpload = async (req: express.Request, res: express.Response)
         }
       }
 
+      // Cache raw buffer and base64 for LLM RAG / chat calls
+      pdfStoreList.push({
+        name: originalName,
+        size: file.size,
+        category,
+        buffer: file.buffer,
+        base64: file.buffer.toString('base64'),
+        mimeType: file.mimetype || 'application/pdf',
+      });
+
       const isDrawing = category === 'drawing';
 
       let extractedText = '';
@@ -164,7 +193,7 @@ const handleDocumentUpload = async (req: express.Request, res: express.Response)
 
         if (parsed.pages && Array.isArray(parsed.pages) && parsed.pages.length > 0) {
           parsed.pages.forEach((p: any, idx: number) => {
-            const pageTxt = (p.text || '').trim();
+            const pageTxt = sanitizePdfText(p.text || '').trim();
             pages.push({
               pageNumber: p.num || idx + 1,
               sheetOrSection: isDrawing ? `Sheet ${originalName.replace(/\.pdf$/i, '')}` : `Section ${idx + 1}`,
@@ -177,12 +206,13 @@ const handleDocumentUpload = async (req: express.Request, res: express.Response)
           const rawPages = extractedText.split(/\f|\n\s*---\s*Page\s*\d+\s*---\s*\n/);
           if (rawPages.length > 1) {
             rawPages.forEach((txt, idx) => {
-              if (txt.trim().length > 0) {
+              const cleanTxt = sanitizePdfText(txt).trim();
+              if (cleanTxt.length > 0) {
                 pages.push({
                   pageNumber: idx + 1,
                   sheetOrSection: isDrawing ? `Sheet ${originalName.replace(/\.pdf$/i, '')}` : `Section ${idx + 1}`,
                   title: `${isDrawing ? 'Drawing Sheet' : 'Spec Section'} (Page ${idx + 1})`,
-                  text: txt.trim(),
+                  text: cleanTxt,
                 });
               }
             });
@@ -199,7 +229,7 @@ const handleDocumentUpload = async (req: express.Request, res: express.Response)
           pageNumber: 1,
           sheetOrSection: isDrawing ? originalName.replace(/\.pdf$/i, '') : 'General Spec',
           title: originalName,
-          text: extractedText.trim() || 'Visual drawing sheet. Text extraction produced minimal character data. Visual review required.',
+          text: sanitizePdfText(extractedText).trim() || 'Visual drawing sheet. Text extraction produced minimal character data. Visual review required.',
         });
       }
 
@@ -585,23 +615,167 @@ app.patch('/api/projects/:id/findings/:findingId', (req, res) => {
   res.json({ message: 'Finding updated', finding });
 });
 
-// 9. Limited Project Chat: Strictly grounded Q&A
-app.post('/api/projects/:id/chat', async (req, res) => {
-  const project = projectsStore.get(req.params.id);
-  if (!project) {
-    return res.status(404).json({ error: 'Project not found' });
+// Helper: Execute Grounded Document Search across indexed project pages
+function executeLocalDocumentSearch(
+  question: string,
+  project: Project | null | undefined,
+  rawDocContext?: string
+) {
+  const qLower = question.toLowerCase();
+  // Filter search terms, including electrical keywords (even short ones like bus, ats, ahu, awg, 26, cu, al)
+  const technicalTerms = qLower
+    .replace(/[^\w\s-]/g, ' ')
+    .split(/\s+/)
+    .filter((w) => w.length >= 2 && !['what', 'where', 'which', 'does', 'have', 'from', 'with', 'about', 'this', 'that', 'they', 'when'].includes(w));
+
+  const matchingPages: Array<{
+    docName: string;
+    sheetOrSection?: string;
+    pageNumber: number;
+    quote: string;
+    score: number;
+  }> = [];
+
+  if (project && project.documents) {
+    for (const doc of project.documents) {
+      for (const page of doc.pages) {
+        const pText = (page.text || '').toLowerCase();
+        let score = 0;
+
+        // Exact multi-term matches
+        for (const term of technicalTerms) {
+          if (pText.includes(term)) {
+            // Give higher weight to critical electrical keywords
+            if (/copper|bussing|bus|panelboard|generator|feeder|breaker|26\s*24\s*16|transformer|raceway|conduit/i.test(term)) {
+              score += 5;
+            } else {
+              score += 2;
+            }
+          }
+        }
+
+        // Boost if query matches section or title
+        if (page.sheetOrSection && technicalTerms.some(t => page.sheetOrSection?.toLowerCase().includes(t))) {
+          score += 10;
+        }
+
+        if (score > 0) {
+          // Find best snippet around first matched term
+          const matchedTerm = technicalTerms.find((t) => pText.includes(t)) || technicalTerms[0] || '';
+          const idx = pText.indexOf(matchedTerm);
+          const start = Math.max(0, idx - 60);
+          const end = Math.min(page.text.length, idx + 200);
+          const snippet = sanitizePdfText(page.text.slice(start, end)).replace(/\n+/g, ' ').trim();
+
+          matchingPages.push({
+            docName: doc.name,
+            sheetOrSection: page.sheetOrSection || `Section 26 (Page ${page.pageNumber})`,
+            pageNumber: page.pageNumber,
+            quote: snippet,
+            score,
+          });
+        }
+      }
+    }
   }
 
-  const rawQuestion = req.body.question || req.body.query;
-  if (!rawQuestion || typeof rawQuestion !== 'string' || !rawQuestion.trim()) {
-    return res.status(400).json({ error: 'Question is required' });
-  }
-  const question = rawQuestion.trim();
+  matchingPages.sort((a, b) => b.score - a.score);
 
-  // If no documents exist in the project, decline grounded question
-  if (!project.documents || project.documents.length === 0) {
+  if (matchingPages.length > 0) {
+    const top = matchingPages[0];
+    const otherDocs = Array.from(new Set(matchingPages.map((m) => m.docName))).join(', ');
+    return {
+      content: sanitizePdfText(
+        `Based on verified project documents in ${top.docName} (${top.sheetOrSection}): "${top.quote}"`
+      ),
+      notEnoughInfo: false,
+      citations: matchingPages.slice(0, 3).map((m) => ({
+        documentName: m.docName,
+        sheetOrSection: m.sheetOrSection,
+        pageNumber: m.pageNumber,
+        quote: m.quote,
+      })),
+    };
+  }
+
+  // If text context was provided directly without project structure
+  if (rawDocContext && technicalTerms.some((t) => rawDocContext.toLowerCase().includes(t))) {
+    const term = technicalTerms.find((t) => rawDocContext.toLowerCase().includes(t)) || '';
+    const idx = rawDocContext.toLowerCase().indexOf(term);
+    const snippet = sanitizePdfText(rawDocContext.slice(Math.max(0, idx - 40), Math.min(rawDocContext.length, idx + 240))).trim();
+    return {
+      content: `Found matching specification clause: "${snippet}"`,
+      notEnoughInfo: false,
+      citations: [
+        {
+          documentName: 'Uploaded Division 26 Specification',
+          sheetOrSection: 'Specification Clause',
+          pageNumber: 1,
+          quote: snippet.slice(0, 150),
+        },
+      ],
+    };
+  }
+
+  return {
+    content: 'This detail is not mentioned in the uploaded Division 26 specification document.',
+    notEnoughInfo: true,
+    citations: [],
+  };
+}
+
+// 9. Grounded Chat Endpoint Handler (Handles both /api/projects/:id/chat and /api/chat)
+const handleGroundedChat = async (req: express.Request, res: express.Response) => {
+  const userPrompt = (
+    req.body.userPrompt ||
+    req.body.question ||
+    req.body.prompt ||
+    req.body.query ||
+    ''
+  ).trim();
+
+  if (!userPrompt) {
+    return res.status(400).json({ error: 'User inquiry prompt is required' });
+  }
+
+  // Resolve target project
+  const projectId = req.params.id || req.body.projectId;
+  const project = projectId 
+    ? projectsStore.get(projectId) 
+    : (projectsStore.size > 0 ? Array.from(projectsStore.values())[0] : null);
+
+  // Retrieve PDF Buffer or Base64 (from body payload OR memory store)
+  let pdfBase64: string | undefined = req.body.pdfBase64 || req.body.pdfBuffer;
+  let pdfMimeType = req.body.mimeType || 'application/pdf';
+
+  if (!pdfBase64 && project) {
+    const storedPdfs = projectPdfBuffers.get(project.id);
+    if (storedPdfs && storedPdfs.length > 0) {
+      // Prioritize specification documents, then drawing sheets
+      const primaryPdf = storedPdfs.find((p) => p.category === 'specification') || storedPdfs[0];
+      pdfBase64 = primaryPdf.base64;
+      pdfMimeType = primaryPdf.mimeType || 'application/pdf';
+    }
+  }
+
+  // Compile extracted textual context with exact sheet/section citations
+  let docContext = '';
+  if (project && project.documents.length > 0) {
+    docContext = project.documents
+      .map((d) => {
+        return d.pages
+          .map((p) => `[Document: ${d.name} | ${p.sheetOrSection || 'Page'} ${p.pageNumber}]\n${sanitizePdfText(p.text).slice(0, 3000)}`)
+          .join('\n');
+      })
+      .join('\n\n');
+  } else if (req.body.documentText) {
+    docContext = sanitizePdfText(req.body.documentText);
+  }
+
+  // Check if project or PDF exists
+  if (!pdfBase64 && (!project || project.documents.length === 0) && !docContext) {
     return res.json({
-      content: 'No documents have been uploaded for this project yet. Please upload electrical drawings and specifications first to enable grounded inquiry.',
+      content: 'Please upload electrical drawings and Division 26 specifications first to enable grounded inquiry.',
       notEnoughInfo: true,
       citations: [],
     });
@@ -609,106 +783,61 @@ app.post('/api/projects/:id/chat', async (req, res) => {
 
   const ai = getAi();
   if (!ai) {
-    // Grounded search across the user's actual uploaded documents
-    const qLower = question.toLowerCase();
-    const words = qLower.split(/\s+/).filter(w => w.length > 3);
-    
-    // Search pages for matching query words
-    const matchingPages: Array<{
-      docName: string;
-      sheetOrSection?: string;
-      pageNumber: number;
-      text: string;
-      score: number;
-    }> = [];
-
-    for (const doc of project.documents) {
-      for (const page of doc.pages) {
-        const pText = (page.text || '').toLowerCase();
-        let score = 0;
-        for (const w of words) {
-          if (pText.includes(w)) score += 1;
-        }
-        if (score > 0) {
-          matchingPages.push({
-            docName: doc.name,
-            sheetOrSection: page.sheetOrSection,
-            pageNumber: page.pageNumber,
-            text: page.text,
-            score,
-          });
-        }
-      }
-    }
-
-    matchingPages.sort((a, b) => b.score - a.score);
-
-    if (matchingPages.length > 0) {
-      const topMatch = matchingPages[0];
-      const excerpt = topMatch.text.slice(0, 260).trim();
-      return res.json({
-        content: `Based on verified text in ${topMatch.docName} (${topMatch.sheetOrSection || 'Page ' + topMatch.pageNumber}): "${excerpt}..."`,
-        citations: [
-          {
-            documentName: topMatch.docName,
-            sheetOrSection: topMatch.sheetOrSection || `Page ${topMatch.pageNumber}`,
-            pageNumber: topMatch.pageNumber,
-            quote: excerpt.slice(0, 150),
-          },
-        ],
-      });
-    } else {
-      return res.json({
-        content: 'Not enough information in the uploaded documents to answer this specific query.',
-        notEnoughInfo: true,
-        citations: [],
-      });
-    }
+    // Offline / unauthenticated fallback
+    return res.json(executeLocalDocumentSearch(userPrompt, project, docContext));
   }
 
-  // With Gemini AI Client
+  // Gemini API Grounded RAG Execution with PDF Payload Attached
   try {
-    const docContext = project.documents.map(d => {
-      const pText = d.pages.map(p => `[${d.name} | ${p.sheetOrSection || 'Page'} ${p.pageNumber}]\n${p.text.slice(0, 2500)}`).join('\n');
-      return pText;
-    }).join('\n\n');
-
     const systemInstruction = `You are a Senior Electrical Estimator & Specification Specialist specializing in Commercial Electrical Construction, CSI MasterFormat Division 26, and NEC / NFPA standards.
 
-OPERATIONAL MODES & INTENT CLASSIFICATION:
+OPERATIONAL INSTRUCTIONS:
+1. Answer the user inquiry strictly based on the attached PDF document and verified document text.
+2. Provide technical, factual answers (e.g. copper vs aluminum bus material, conduit specifications, emergency power, equipment ratings, AHU feeders).
+3. Always cite the exact CSI Section number (e.g., Section 26 24 16 Panelboards, Section 26 05 33 Raceway and Boxes) or Drawing Sheet (e.g., Sheet E1.1) and page number.
+4. If and only if the requested detail is not mentioned anywhere in the uploaded Division 26 specification document or drawings, state: "This detail is not mentioned in the uploaded Division 26 specification document." and set notEnoughInfo: true.
+5. Strictly forbid hallucinations or ungrounded assumptions.`;
 
-MODE 1: DIRECT DOCUMENT QA (DEFAULT FOR CHAT)
-- Trigger: User asks a factual, technical, or informational question about specifications or drawings (e.g., conduit types, wiring methods, equipment ratings, emergency power, approved manufacturers, testing requirements).
-- Behavior: Search the provided project documents, synthesize a direct, technical, and precise answer, and cite the EXACT CSI section number (e.g., Section 26 05 33 Raceway and Boxes, Section 26 24 16 Panelboards) and page number.
-- CRITICAL NEGATIVE CONSTRAINT: DO NOT frame the answer as a "conflict", "discrepancy", or "scope gap". DO NOT mention "conflicts" or recommend checking "mechanical schedules" or other unrelated trades unless the user specifically inquired about them or unless the text explicitly mandates a cross-trade interface.
+    // Construct contents payload: PDF inlineData + prompt text
+    const contents: any[] = [];
 
-MODE 2: SCOPE & GAP AUDIT (TRIGGERED ONLY ON EXPLICIT COMPARISON REQUESTS)
-- Trigger: The user explicitly uses words like "conflict", "gap", "discrepancy", "omission", "missing allowance", "mismatch between specs and drawings", or "compare".
-- Behavior: Cross-reference Specification requirements against Drawing schedules/notes, identify scope gaps or missing contractor allowances, and cite both sources.
+    // ✅ REQUIRED ATTACHMENT: Attach PDF payload via inlineData
+    if (pdfBase64) {
+      contents.push({
+        inlineData: {
+          data: pdfBase64,
+          mimeType: pdfMimeType,
+        },
+      });
+    }
 
-FALLBACK & GROUNDING INTEGRITY:
-- If the requested detail is not found in the uploaded documents, state clearly: "This detail is not mentioned in the uploaded Division 26 specification document."
-- Strictly forbid hallucinations, ungrounded assumptions, or pointing estimators to unrelated trades.`;
-
-    const prompt = `PROJECT DOCUMENTS CONTEXT:
-${docContext}
+    const promptText = `PROJECT DIVISION 26 DOCUMENT CONTEXT:
+${docContext.slice(0, 40000)}
 
 USER INQUIRY:
-"${question}"
+"${userPrompt}"
 
-Provide a grounded response with precise citations following the System Instructions.`;
+Analyze the attached PDF file and document text. Synthesize a direct, technical, evidence-based response with precise citations following the System Instructions.`;
+
+    contents.push(promptText);
 
     const response = await ai.models.generateContent({
       model: 'gemini-3.8-flash',
-      contents: prompt,
+      contents,
       config: {
         systemInstruction,
         responseMimeType: 'application/json',
         responseSchema: {
           type: Type.OBJECT,
           properties: {
-            content: { type: Type.STRING, description: 'Direct, technical, evidence-based answer or fallback statement' },
-            notEnoughInfo: { type: Type.BOOLEAN, description: 'True if detail is not found in the documents' },
+            content: { 
+              type: Type.STRING, 
+              description: 'Direct, technical, evidence-based answer or fallback statement' 
+            },
+            notEnoughInfo: { 
+              type: Type.BOOLEAN, 
+              description: 'True if detail is genuinely not found in the documents' 
+            },
             citations: {
               type: Type.ARRAY,
               items: {
@@ -729,56 +858,20 @@ Provide a grounded response with precise citations following the System Instruct
     });
 
     const parsed = JSON.parse(response.text || '{}');
-    res.json(parsed);
-  } catch (error: any) {
-    console.warn('Gemini chat API error or spike, falling back to document search:', error.message);
-    
-    // Fallback grounded answer directly from indexed project documents
-    const qLower = question.toLowerCase();
-    const matchingPages: Array<{ docName: string; sheetOrSection: string; pageNum: number; quote: string }> = [];
-
-    project.documents.forEach((d) => {
-      d.pages.forEach((p) => {
-        const textLower = p.text.toLowerCase();
-        // Check relevance
-        const terms = qLower.split(/\s+/).filter(w => w.length > 3);
-        const matchCount = terms.filter(t => textLower.includes(t)).length;
-        if (matchCount >= 1) {
-          // Extract relevant quote snippet around first match
-          const firstTerm = terms.find(t => textLower.includes(t)) || '';
-          const idx = textLower.indexOf(firstTerm);
-          const snippet = p.text.slice(Math.max(0, idx - 40), Math.min(p.text.length, idx + 140)).replace(/\n/g, ' ').trim();
-          matchingPages.push({
-            docName: d.name,
-            sheetOrSection: p.sheetOrSection || `Page ${p.pageNumber}`,
-            pageNum: p.pageNumber,
-            quote: snippet,
-          });
-        }
-      });
-    });
-
-    if (matchingPages.length > 0) {
-      const topMatches = matchingPages.slice(0, 3);
-      res.json({
-        content: `From document search on this project: Found ${matchingPages.length} relevant citation(s) in ${topMatches.map(m => m.docName).join(', ')}.`,
-        notEnoughInfo: false,
-        citations: topMatches.map(m => ({
-          documentName: m.docName,
-          sheetOrSection: m.sheetOrSection,
-          pageNumber: m.pageNum,
-          quote: m.quote,
-        })),
-      });
-    } else {
-      res.json({
-        content: 'Not enough information in the uploaded documents to answer this specific query.',
-        notEnoughInfo: true,
-        citations: [],
-      });
+    if (parsed.content) {
+      parsed.content = sanitizePdfText(parsed.content);
     }
+    return res.json(parsed);
+  } catch (error: any) {
+    console.warn('Gemini chat API error, executing grounded document search fallback:', error.message);
+    return res.json(executeLocalDocumentSearch(userPrompt, project, docContext));
   }
-});
+};
+
+// Mount both project-specific chat and global chat endpoints
+app.post('/api/projects/:id/chat', handleGroundedChat);
+app.post('/api/chat', handleGroundedChat);
+
 
 // Silence Vercel analytics/insights dev beacons to prevent 404 console errors
 app.all('/_vercel/*', (req, res) => {

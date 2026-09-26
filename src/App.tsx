@@ -3,10 +3,9 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import React, { useState, useEffect, useCallback, useMemo, Suspense } from 'react';
-import { Project, Finding, FindingStatus, ChatMessage, ProjectDocument } from './types';
-import { EMPTY_PROJECT } from './demoData';
-import { apiClient } from './services/apiClient';
+import React, { useState, useCallback } from 'react';
+import { Project, FindingStatus } from './types';
+import { PdfProjectProvider, usePdfProject } from './context/PdfProjectContext';
 import { StudioHeader } from './components/StudioHeader';
 import { StudioSidebar } from './components/StudioSidebar';
 import { StudioBuildHome } from './components/StudioBuildHome';
@@ -17,17 +16,27 @@ import { UploadModal } from './components/UploadModal';
 import { PipelineStatusModal } from './components/PipelineStatusModal';
 import { ExportSummaryModal } from './components/ExportSummaryModal';
 
-export default function App() {
-  const [project, setProject] = useState<Project>(EMPTY_PROJECT);
-  const [allProjects, setAllProjects] = useState<
-    Array<{ id: string; name: string; status: string; findingsCount: number }>
-  >([]);
+function AppContent() {
+  const {
+    project,
+    setProject,
+    allProjects,
+    activeFinding,
+    selectedFindingId,
+    setSelectedFindingId,
+    updateFindingStatus,
+    updateFindingNotes,
+    pdfFiles,
+    activePdf,
+    chatMessages,
+    isChatLoading,
+    sendChatMessage,
+    runScopeCheck,
+    resetWorkspace,
+  } = usePdfProject();
 
-  const [selectedFindingId, setSelectedFindingId] = useState<string | null>(null);
-
-  // Active Main View: 'home' matches the Google AI Studio Build Home screenshot!
+  // Active Main View: 'home' matches the Google AI Studio Build Home
   const [currentView, setCurrentView] = useState<'home' | 'playground' | 'history' | 'gallery'>('home');
-
   const [preferredView, setPreferredView] = useState<'specification' | 'drawing' | 'split'>('specification');
 
   // Side Panel Collapsible States (Google AI Studio style)
@@ -36,118 +45,15 @@ export default function App() {
 
   // Analysis / Prompt Execution State
   const [isAnalyzing, setIsAnalyzing] = useState(false);
-  const [isChatLoading, setIsChatLoading] = useState(false);
-
-  // Conversational Turns / Queries
-  const [chatMessages, setChatMessages] = useState<ChatMessage[]>([]);
 
   // Modals
   const [isUploadOpen, setIsUploadOpen] = useState(false);
   const [isPipelineOpen, setIsPipelineOpen] = useState(false);
   const [isExportOpen, setIsExportOpen] = useState(false);
 
-  // Fetch specific project
-  const loadProject = useCallback(async (projectId: string) => {
-    try {
-      const data = await apiClient.getProject(projectId);
-      if (data) {
-        setProject(data);
-        if (data.findings.length > 0) {
-          setSelectedFindingId(data.findings[0].id);
-        } else {
-          setSelectedFindingId(null);
-        }
-      }
-    } catch (err) {
-      console.error('Error fetching project:', err);
-    }
-  }, []);
-
-  // Fetch project list on load
-  const loadProjects = useCallback(async () => {
-    try {
-      const list = await apiClient.getProjects();
-      if (list && list.length > 0) {
-        setAllProjects(list.map((p) => ({
-          id: p.id,
-          name: p.name,
-          status: p.status,
-          findingsCount: p.findings.length,
-        })));
-        return list;
-      }
-      return [];
-    } catch (err) {
-      console.warn('Could not fetch projects list:', err);
-      return [];
-    }
-  }, []);
-
-  useEffect(() => {
-    let isMounted = true;
-    (async () => {
-      const list = await loadProjects();
-      if (isMounted && list.length > 0) {
-        await loadProject(list[0].id);
-      }
-    })();
-    return () => {
-      isMounted = false;
-    };
-  }, [loadProjects, loadProject]);
-
-  const activeFinding = useMemo(() => {
-    return project.findings.find((f) => f.id === selectedFindingId) || project.findings[0] || null;
-  }, [project.findings, selectedFindingId]);
-
-  // Decision updater helper
-  const updateFindingStatus = useCallback(async (findingId: string, newStatus: FindingStatus) => {
-    setProject((prev) => ({
-      ...prev,
-      findings: prev.findings.map((f) =>
-        f.id === findingId
-          ? { ...f, status: newStatus, decidedAt: new Date().toISOString() }
-          : f
-      ),
-    }));
-
-    try {
-      await apiClient.updateFindingStatus(project.id, findingId, newStatus);
-    } catch (err) {
-      console.error('Failed to sync finding status:', err);
-    }
-  }, [project.id]);
-
   const handleAccept = useCallback((findingId: string) => updateFindingStatus(findingId, 'ACCEPTED'), [updateFindingStatus]);
   const handleReject = useCallback((findingId: string) => updateFindingStatus(findingId, 'REJECTED'), [updateFindingStatus]);
   const handleReviewLater = useCallback((findingId: string) => updateFindingStatus(findingId, 'REVIEW_LATER'), [updateFindingStatus]);
-
-  const handleUpdateNotes = useCallback(async (findingId: string, notes: string) => {
-    setProject((prev) => ({
-      ...prev,
-      findings: prev.findings.map((f) =>
-        f.id === findingId ? { ...f, estimatorNotes: notes } : f
-      ),
-    }));
-
-    try {
-      await apiClient.updateFindingNotes(project.id, findingId, notes);
-    } catch (err) {
-      console.error('Failed to sync estimator notes:', err);
-    }
-  }, [project.id]);
-
-  const handleResetDemo = useCallback(async () => {
-    try {
-      await apiClient.resetWorkspace();
-    } catch (err) {
-      console.warn('Reset error:', err);
-    }
-    setProject(EMPTY_PROJECT);
-    setAllProjects([]);
-    setSelectedFindingId(null);
-    setChatMessages([]);
-  }, []);
 
   // Re-run Scope Check (AI Studio Primary Action)
   const handleRunScopeCheck = useCallback(async () => {
@@ -157,61 +63,18 @@ export default function App() {
     }
     setIsAnalyzing(true);
     try {
-      const analyzedProject = await apiClient.analyzeProject(project.id);
-      if (analyzedProject) {
-        setProject(analyzedProject);
-        if (analyzedProject.findings.length > 0) {
-          setSelectedFindingId(analyzedProject.findings[0].id);
-        }
-      }
+      await runScopeCheck();
     } catch (err) {
       console.error('Failed to re-run scope check:', err);
     } finally {
       setIsAnalyzing(false);
     }
-  }, [project.id, project.documents.length]);
+  }, [project.id, project.documents.length, runScopeCheck]);
 
   // Grounded Prompt Execution from Canvas Prompt Bar or Build Home Input
   const handleSendMessage = useCallback(async (query: string) => {
-    if (!query.trim() || isChatLoading) return;
-
-    const userMsg: ChatMessage = {
-      id: 'msg-' + Date.now(),
-      role: 'user',
-      content: query,
-      timestamp: new Date().toISOString(),
-    };
-
-    if (!project.id || project.documents.length === 0) {
-      const assistantMsg: ChatMessage = {
-        id: 'msg-' + (Date.now() + 1),
-        role: 'assistant',
-        content: 'Please upload electrical drawing sheets and Division 26 specifications to begin grounded scope checking.',
-        citations: [],
-        timestamp: new Date().toISOString(),
-      };
-      setChatMessages((prev) => [...prev, userMsg, assistantMsg]);
-      return;
-    }
-
-    setChatMessages((prev) => [...prev, userMsg]);
-    setIsChatLoading(true);
-
-    try {
-      const assistantMsg = await apiClient.chatWithProject(project.id, query);
-      setChatMessages((prev) => [...prev, assistantMsg]);
-    } catch (err) {
-      const errorMsg: ChatMessage = {
-        id: 'msg-err-' + Date.now(),
-        role: 'assistant',
-        content: 'Sorry, I encountered an error checking project documents. Please verify your connection or try again.',
-        timestamp: new Date().toISOString(),
-      };
-      setChatMessages((prev) => [...prev, errorMsg]);
-    } finally {
-      setIsChatLoading(false);
-    }
-  }, [isChatLoading, project.id, project.documents.length]);
+    await sendChatMessage(query);
+  }, [sendChatMessage]);
 
   // Jump from finding or citation directly to Inspector evidence viewer
   const handleInspectEvidence = useCallback((docName: string, pageNum: number, view: 'specification' | 'drawing') => {
@@ -220,53 +83,17 @@ export default function App() {
     setCurrentView('playground');
   }, []);
 
-  // Keyboard navigation for fast estimator review in playground
-  useEffect(() => {
-    const handleKeyDown = (e: KeyboardEvent) => {
-      if (['INPUT', 'TEXTAREA'].includes((e.target as HTMLElement).tagName)) {
-        return;
-      }
-
-      if (currentView !== 'playground' || !activeFinding) return;
-
-      const currentIndex = project.findings.findIndex((f) => f.id === activeFinding.id);
-
-      if (e.key === 'ArrowDown') {
-        e.preventDefault();
-        const nextIdx = Math.min(project.findings.length - 1, currentIndex + 1);
-        setSelectedFindingId(project.findings[nextIdx].id);
-      } else if (e.key === 'ArrowUp') {
-        e.preventDefault();
-        const prevIdx = Math.max(0, currentIndex - 1);
-        setSelectedFindingId(project.findings[prevIdx].id);
-      } else if (e.key === 'a' || e.key === 'A') {
-        handleAccept(activeFinding.id);
-      } else if (e.key === 'r' || e.key === 'R') {
-        handleReject(activeFinding.id);
-      } else if (e.key === 'l' || e.key === 'L') {
-        handleReviewLater(activeFinding.id);
-      }
-    };
-
-    window.addEventListener('keydown', handleKeyDown);
-    return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [activeFinding, project.findings, currentView, handleAccept, handleReject, handleReviewLater]);
-
   return (
-    <div className="flex flex-col h-screen w-screen bg-slate-100 text-slate-900 font-sans overflow-hidden antialiased">
-      {/* Top AI Studio Header Bar */}
+    <div className="h-screen w-screen flex flex-col bg-white text-slate-900 overflow-hidden select-none font-sans">
+      {/* Top Google AI Studio Header */}
       <StudioHeader
         project={project}
-        allProjects={allProjects}
-        onSelectProject={loadProject}
-        isLeftOpen={isLeftOpen}
-        onToggleLeft={() => setIsLeftOpen(!isLeftOpen)}
-        isRightOpen={isRightOpen}
-        onToggleRight={() => setIsRightOpen(!isRightOpen)}
+        projectsList={allProjects}
+        onSelectProject={() => {}}
         onOpenUpload={() => setIsUploadOpen(true)}
         onOpenPipeline={() => setIsPipelineOpen(true)}
         onOpenExport={() => setIsExportOpen(true)}
-        onResetDemo={handleResetDemo}
+        onResetDemo={resetWorkspace}
         onRunScopeCheck={handleRunScopeCheck}
         isAnalyzing={isAnalyzing}
         currentView={currentView}
@@ -275,7 +102,7 @@ export default function App() {
 
       {/* Main Studio Area */}
       <div className="flex-1 flex overflow-hidden w-full relative">
-        {/* Left Sidebar (Matching Google AI Studio Explore / Build / Manage hierarchy) */}
+        {/* Left Sidebar */}
         {isLeftOpen && (
           <StudioSidebar
             project={project}
@@ -293,9 +120,8 @@ export default function App() {
           />
         )}
 
-        {/* Dynamic Center: Exact Google AI Studio Build Home vs Playground */}
+        {/* Dynamic Center: Google AI Studio Build Home vs Playground */}
         {currentView === 'home' || currentView === 'gallery' ? (
-          /* Google AI Studio Build Home View (matches user's screenshot) */
           <StudioBuildHome
             project={project}
             onSelectFinding={(f) => {
@@ -312,7 +138,6 @@ export default function App() {
             onReviewLaterFinding={handleReviewLater}
           />
         ) : (
-          /* Google AI Studio Playground 2-Pane / 3-Pane View (Discrepancy inspection & Side-by-Side viewer) */
           <div className="flex-1 flex overflow-hidden w-full h-full">
             <StudioCanvas
               project={project}
@@ -320,14 +145,16 @@ export default function App() {
               onAccept={handleAccept}
               onReject={handleReject}
               onReviewLater={handleReviewLater}
-              onUpdateNotes={handleUpdateNotes}
+              onUpdateNotes={updateFindingNotes}
               onInspectEvidence={handleInspectEvidence}
               chatMessages={chatMessages}
               onSendMessage={handleSendMessage}
               isChatLoading={isChatLoading}
+              activePdf={activePdf}
+              pdfFiles={pdfFiles}
             />
 
-            {/* Right Inspector: Parameters & Side-by-Side Evidence Viewer */}
+            {/* Right Inspector: Parameters & Evidence Viewer */}
             {isRightOpen && (
               <StudioInspector
                 project={project}
@@ -341,13 +168,12 @@ export default function App() {
         )}
       </div>
 
-      {/* Upload Modal */}
+      {/* Upload Modal with Unified PDF Pipeline */}
       <UploadModal
         isOpen={isUploadOpen}
         onClose={() => setIsUploadOpen(false)}
         onUploadSuccess={(newProj) => {
           setProject(newProj);
-          loadProjects();
           if (newProj.findings.length > 0) {
             setSelectedFindingId(newProj.findings[0].id);
           }
@@ -368,7 +194,7 @@ export default function App() {
         project={project}
       />
 
-      {/* Floating Feedback Button (Always accessible on bottom corner for mobile / fast feedback) */}
+      {/* Floating Feedback Button */}
       <div className="fixed bottom-4 right-4 z-40 sm:hidden">
         <FeedbackButton 
           variant="default" 
@@ -376,5 +202,13 @@ export default function App() {
         />
       </div>
     </div>
+  );
+}
+
+export default function App() {
+  return (
+    <PdfProjectProvider>
+      <AppContent />
+    </PdfProjectProvider>
   );
 }
