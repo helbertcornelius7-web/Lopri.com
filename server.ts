@@ -929,6 +929,7 @@ MANDATORY PROTOCOL FOR LOPRI AI:
       contents,
       config: {
         systemInstruction,
+        maxOutputTokens: 4096,
         responseMimeType: 'application/json',
         responseSchema: {
           type: Type.OBJECT,
