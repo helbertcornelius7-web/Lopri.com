@@ -15,6 +15,8 @@ import { FeedbackButton } from './components/FeedbackButton';
 import { UploadModal } from './components/UploadModal';
 import { PipelineStatusModal } from './components/PipelineStatusModal';
 import { ExportSummaryModal } from './components/ExportSummaryModal';
+import { Analytics } from '@vercel/analytics/react';
+import { SpeedInsights } from '@vercel/speed-insights/react';
 
 function AppContent() {
   const {
@@ -216,6 +218,8 @@ export default function App() {
   return (
     <PdfProjectProvider>
       <AppContent />
+      <Analytics />
+      <SpeedInsights />
     </PdfProjectProvider>
   );
 }
