@@ -37,7 +37,19 @@ export const UploadModal: React.FC<UploadModalProps> = ({
     return /E\d|drawing|plan|schematic|dwg|single-line|schedule|sheet/i.test(name);
   };
 
+  const formatFileSize = (bytes: number) => {
+    if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+    return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+  };
+
   const updateFilesWithCategories = (newFiles: File[]) => {
+    // Check if any file exceeds 250MB
+    const oversized = newFiles.filter(f => f.size > 250 * 1024 * 1024);
+    if (oversized.length > 0) {
+      setUploadError(`The following file(s) exceed 250MB: ${oversized.map(f => f.name).join(', ')}. Please select files under 250MB.`);
+      return;
+    }
+
     setSelectedFiles((prev) => {
       const combined = [...prev, ...newFiles];
       setCategories((prevCats) => {
@@ -171,7 +183,7 @@ export const UploadModal: React.FC<UploadModalProps> = ({
               Click to select or drag and drop PDF files
             </div>
             <div className="text-[11px] text-slate-500 mt-1">
-              Multiple files supported: <span className="font-semibold text-slate-700">E1.1.pdf</span>, <span className="font-semibold text-slate-700">E2.1.pdf</span>, <span className="font-semibold text-slate-700">Specifications.pdf</span>
+              Supports heavy electrical packages up to <span className="font-semibold text-slate-700">250MB per file</span> (drawings, single-line schematics, & Division 26 spec books)
             </div>
             <input
               id="file-upload-input"
@@ -186,8 +198,11 @@ export const UploadModal: React.FC<UploadModalProps> = ({
           {/* Selected Files List */}
           {selectedFiles.length > 0 && (
             <div className="space-y-1.5 max-h-44 overflow-y-auto pr-1">
-              <div className="text-xs font-bold uppercase tracking-wider text-slate-500">
-                Queued Documents ({selectedFiles.length})
+              <div className="flex items-center justify-between text-xs font-bold uppercase tracking-wider text-slate-500">
+                <span>Queued Documents ({selectedFiles.length})</span>
+                <span className="font-mono text-[10px] text-slate-400">
+                  Total: {formatFileSize(selectedFiles.reduce((acc, f) => acc + f.size, 0))}
+                </span>
               </div>
               {selectedFiles.map((file, idx) => {
                 const currentCat = categories[file.name] || (isLikelyDrawing(file.name) ? 'drawing' : 'specification');
@@ -203,12 +218,15 @@ export const UploadModal: React.FC<UploadModalProps> = ({
                       ) : (
                         <FileText className="w-4 h-4 text-amber-600 shrink-0" />
                       )}
-                      <span className="truncate text-slate-800 font-medium max-w-[160px] sm:max-w-[200px]">{file.name}</span>
+                      <div className="flex flex-col min-w-0">
+                        <span className="truncate text-slate-800 font-medium max-w-[140px] sm:max-w-[190px]">{file.name}</span>
+                        <span className="text-[10px] text-slate-400 font-mono">{formatFileSize(file.size)}</span>
+                      </div>
                       <button
                         type="button"
                         onClick={() => toggleCategory(file.name)}
                         title="Click to switch category"
-                        className={`text-[10px] font-semibold px-2 py-0.5 rounded-full border transition-colors cursor-pointer shrink-0 ${
+                        className={`text-[10px] font-semibold px-2 py-0.5 rounded-full border transition-colors cursor-pointer shrink-0 ml-1 ${
                           isDwg 
                             ? 'bg-sky-50 border-sky-200 text-sky-700 hover:bg-sky-100' 
                             : 'bg-amber-50 border-amber-200 text-amber-700 hover:bg-amber-100'

@@ -35,10 +35,13 @@ export function saveLocalProject(project: Project) {
   saveLocalProjects(all);
 }
 
-// Fast in-browser text extractor from PDF ArrayBuffer
+// Fast in-browser text extractor from PDF ArrayBuffer (memory-safe for heavy projects)
 export async function extractPdfTextInBrowser(file: File): Promise<{ text: string; pages: DocumentPage[] }> {
   try {
-    const arrayBuffer = await file.arrayBuffer();
+    // For large files (>8MB), slice to protect browser thread from freezing
+    const isLarge = file.size > 8 * 1024 * 1024;
+    const blobToRead = isLarge ? file.slice(0, 4 * 1024 * 1024) : file;
+    const arrayBuffer = await blobToRead.arrayBuffer();
     const uint8 = new Uint8Array(arrayBuffer);
     const rawString = new TextDecoder('latin1').decode(uint8);
 
@@ -49,8 +52,10 @@ export async function extractPdfTextInBrowser(file: File): Promise<{ text: strin
     const textMatches: string[] = [];
     const btRegex = /BT[\s\S]*?ET/g;
     let match: RegExpExecArray | null;
+    let iteration = 0;
 
-    while ((match = btRegex.exec(rawString)) !== null) {
+    while ((match = btRegex.exec(rawString)) !== null && iteration < 3000) {
+      iteration++;
       const block = match[0];
       // Match text within parentheses (e.g. (Text to display) Tj or [(T)(e)(x)(t)] TJ)
       const stringMatches = block.match(/\(([^()]*)\)/g);

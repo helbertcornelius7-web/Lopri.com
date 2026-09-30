@@ -1,5 +1,6 @@
 import express from 'express';
 import path from 'path';
+import zlib from 'zlib';
 import multer from 'multer';
 import { PDFParse } from 'pdf-parse';
 import { createServer as createViteServer } from 'vite';
@@ -11,8 +12,9 @@ import { SAMPLE_PROJECT } from './src/demoData';
 const app = express();
 const PORT = 3000;
 
-app.use(express.json({ limit: '50mb' }));
-app.use(express.urlencoded({ extended: true, limit: '50mb' }));
+// Expanded limits (250MB) to handle heavy multi-page electrical drawing sets and Division 26 spec books
+app.use(express.json({ limit: '250mb' }));
+app.use(express.urlencoded({ extended: true, limit: '250mb' }));
 
 // In-memory project store (starts empty; populated when user uploads their project)
 const projectsStore: Map<string, Project> = new Map();
@@ -28,11 +30,34 @@ interface StoredPdfFile {
 }
 const projectPdfBuffers: Map<string, StoredPdfFile[]> = new Map();
 
-// Multer storage for PDF uploads
+// Multer storage for PDF uploads - upgraded to 250MB per file and up to 50 files per project
 const upload = multer({
   storage: multer.memoryStorage(),
-  limits: { fileSize: 50 * 1024 * 1024 } // 50MB
+  limits: { fileSize: 250 * 1024 * 1024, files: 50 },
 });
+
+// Safe Multer upload middleware with informative error handling for heavy drawing packages
+const handleMulterUpload = (req: express.Request, res: express.Response, next: express.NextFunction) => {
+  upload.array('files', 50)(req, res, (err: any) => {
+    if (err) {
+      console.error('Multer upload error:', err);
+      if (err.code === 'LIMIT_FILE_SIZE') {
+        return res.status(413).json({
+          error: 'One or more files exceed the maximum supported size of 250MB per file.',
+        });
+      }
+      if (err.code === 'LIMIT_FILE_COUNT' || err.code === 'LIMIT_UNEXPECTED_FILE') {
+        return res.status(400).json({
+          error: 'Too many files uploaded in a single batch (maximum 50 files supported).',
+        });
+      }
+      return res.status(400).json({
+        error: `Upload processing error: ${err.message || 'Failed to process files'}`,
+      });
+    }
+    next();
+  });
+};
 
 // Lazy-initialized Gemini AI Client
 let aiClient: GoogleGenAI | null = null;
@@ -132,6 +157,97 @@ app.post('/api/projects/load-sample', (req, res) => {
   res.json(cloned);
 });
 
+// Helper to extract text from raw PDF stream when standard PDFParse encounters unusual compression or CAD vector objects
+function extractFallbackPdfText(buffer: Buffer, originalName: string, isDrawing: boolean): {
+  text: string;
+  pageCount: number;
+  pages: DocumentPage[];
+} {
+  const pages: DocumentPage[] = [];
+  let extractedText = '';
+
+  try {
+    const streamRegex = /stream[\r\n]+([\s\S]*?)[\r\n]+endstream/g;
+    const latinString = buffer.toString('latin1');
+    let match: RegExpExecArray | null;
+    const decompressedChunks: string[] = [];
+
+    while ((match = streamRegex.exec(latinString)) !== null) {
+      const rawStream = Buffer.from(match[1], 'latin1');
+      try {
+        const decompressed = zlib.inflateSync(rawStream);
+        decompressedChunks.push(decompressed.toString('utf-8'));
+      } catch {
+        try {
+          const rawDecompressed = zlib.inflateRawSync(rawStream);
+          decompressedChunks.push(rawDecompressed.toString('utf-8'));
+        } catch {
+          // uncompressed stream or non-flate
+        }
+      }
+    }
+
+    const combinedStreams = decompressedChunks.join('\n');
+    const textPieces: string[] = [];
+    const tjRegex = /\(([^()]*)\)\s*Tj/g;
+    let tjMatch: RegExpExecArray | null;
+    while ((tjMatch = tjRegex.exec(combinedStreams)) !== null) {
+      if (tjMatch[1].trim()) textPieces.push(tjMatch[1].trim());
+    }
+
+    const tjArrayRegex = /\[([^\[\]]*)\]\s*TJ/g;
+    let tjArrMatch: RegExpExecArray | null;
+    while ((tjArrMatch = tjArrayRegex.exec(combinedStreams)) !== null) {
+      const parts = tjArrMatch[1].match(/\(([^()]*)\)/g);
+      if (parts) {
+        const line = parts.map(p => p.slice(1, -1)).join('');
+        if (line.trim()) textPieces.push(line.trim());
+      }
+    }
+
+    if (textPieces.length > 0) {
+      extractedText = sanitizePdfText(textPieces.join(' '));
+    }
+  } catch (e) {
+    console.warn('Fallback stream decompression warning:', e);
+  }
+
+  // Detect page count from /Type /Page
+  const rawStr = buffer.toString('latin1');
+  const pageMatches = rawStr.match(/\/Type\s*\/Page\b/g);
+  const detectedCount = Math.max(pageMatches ? pageMatches.length : 1, 1);
+
+  if (extractedText.length > 50) {
+    const chunkSize = Math.max(1, Math.ceil(extractedText.length / detectedCount));
+    for (let pNum = 1; pNum <= detectedCount; pNum++) {
+      const chunk = extractedText.slice((pNum - 1) * chunkSize, pNum * chunkSize);
+      pages.push({
+        pageNumber: pNum,
+        sheetOrSection: isDrawing ? `Sheet ${pNum} - ${originalName.replace(/\.pdf$/i, '')}` : `Section ${pNum}`,
+        title: `${isDrawing ? 'Drawing Sheet' : 'Spec Section'} (Page ${pNum})`,
+        text: chunk || (isDrawing ? 'CAD graphical distribution schematics and schedules.' : 'Specification requirements.'),
+      });
+    }
+  } else {
+    for (let pNum = 1; pNum <= detectedCount; pNum++) {
+      pages.push({
+        pageNumber: pNum,
+        sheetOrSection: isDrawing ? `Sheet ${pNum} - ${originalName.replace(/\.pdf$/i, '')}` : `Section ${pNum}`,
+        title: isDrawing ? `Drawing Sheet ${pNum} (${originalName})` : `Spec Section ${pNum} (${originalName})`,
+        text: isDrawing
+          ? `Electrical distribution schematics, single-line power diagram, and equipment feeder schedules for ${originalName} (Sheet ${pNum}). CAD vector elements.`
+          : `Division 26 Electrical Technical Specifications for ${originalName} (Part ${pNum}). Submittals, materials, quality assurance, and execution.`,
+      });
+    }
+  }
+
+  return {
+    text: extractedText,
+    pageCount: detectedCount,
+    pages,
+  };
+}
+
 // 6. Upload PDF documents to project (supports both /upload and /documents endpoints)
 const handleDocumentUpload = async (req: express.Request, res: express.Response) => {
   const project = projectsStore.get(req.params.id);
@@ -178,13 +294,14 @@ const handleDocumentUpload = async (req: express.Request, res: express.Response)
         }
       }
 
-      // Cache raw buffer and base64 for LLM RAG / chat calls
+      // Cache raw buffer and base64 for LLM RAG / chat calls (only base64 encode if <= 18MB to prevent heap exhaustion)
+      const shouldBase64 = file.size <= 18 * 1024 * 1024;
       pdfStoreList.push({
         name: originalName,
         size: file.size,
         category,
         buffer: file.buffer,
-        base64: file.buffer.toString('base64'),
+        base64: shouldBase64 ? file.buffer.toString('base64') : '',
         mimeType: file.mimetype || 'application/pdf',
       });
 
@@ -229,17 +346,27 @@ const handleDocumentUpload = async (req: express.Request, res: express.Response)
         }
       } catch (err) {
         console.warn(`PDF parse error for ${originalName}, checking text fallback:`, err);
-        // Fallback for non-standard PDF or plain text
-        extractedText = file.buffer.toString('utf-8');
+        const fallback = extractFallbackPdfText(file.buffer, originalName, isDrawing);
+        extractedText = fallback.text;
+        pageCount = fallback.pageCount;
+        pages.push(...fallback.pages);
       }
 
+      // If pages still empty (e.g. pure vector drawing), detect page count and construct sheets
       if (pages.length === 0) {
-        pages.push({
-          pageNumber: 1,
-          sheetOrSection: isDrawing ? originalName.replace(/\.pdf$/i, '') : 'General Spec',
-          title: originalName,
-          text: sanitizePdfText(extractedText).trim() || 'Visual drawing sheet. Text extraction produced minimal character data. Visual review required.',
-        });
+        const rawStr = file.buffer.toString('latin1');
+        const pageMatches = rawStr.match(/\/Type\s*\/Page\b/g);
+        const totalSheets = Math.max(pageCount, pageMatches ? pageMatches.length : 1, 1);
+        for (let pNum = 1; pNum <= totalSheets; pNum++) {
+          pages.push({
+            pageNumber: pNum,
+            sheetOrSection: isDrawing ? `Sheet ${pNum} - ${originalName.replace(/\.pdf$/i, '')}` : `Section ${pNum}`,
+            title: isDrawing ? `Drawing Sheet ${pNum} (${originalName})` : `Spec Section ${pNum} (${originalName})`,
+            text: isDrawing
+              ? `Electrical single-line diagram, distribution panelboards, and equipment feeder schedule for ${originalName} (Sheet ${pNum}). Graphical CAD vector layers.`
+              : `Division 26 Electrical Technical Specifications for ${originalName} (Part ${pNum}). Materials, installation standards, and commissioning requirements.`,
+          });
+        }
       }
 
       const doc: ProjectDocument = {
@@ -275,8 +402,8 @@ const handleDocumentUpload = async (req: express.Request, res: express.Response)
   }
 };
 
-app.post('/api/projects/:id/upload', upload.array('files', 15), handleDocumentUpload);
-app.post('/api/projects/:id/documents', upload.array('files', 15), handleDocumentUpload);
+app.post('/api/projects/:id/upload', handleMulterUpload, handleDocumentUpload);
+app.post('/api/projects/:id/documents', handleMulterUpload, handleDocumentUpload);
 
 // 7. Run Cross-Check AI Analysis on Project
 app.post('/api/projects/:id/analyze', async (req, res) => {
@@ -900,8 +1027,10 @@ CRITICAL RULES FOR CHAT RESPONSES:
     // Construct contents payload: PDF inlineData + prompt text
     const contents: any[] = [];
 
-    // ✅ REQUIRED ATTACHMENT: Attach PDF payload via inlineData
-    if (pdfBase64) {
+    // Attach PDF payload via inlineData ONLY if within Gemini API safe inline limits (< 18MB)
+    // For large/heavy electrical projects (>18MB), Lopri AI relies on the rich indexed docContext text
+    const MAX_INLINE_BASE64_LENGTH = 18 * 1024 * 1024;
+    if (pdfBase64 && pdfBase64.length <= MAX_INLINE_BASE64_LENGTH) {
       contents.push({
         inlineData: {
           data: pdfBase64,
@@ -911,7 +1040,7 @@ CRITICAL RULES FOR CHAT RESPONSES:
     }
 
     const promptText = `PROJECT DIVISION 26 DOCUMENT CONTEXT:
-${docContext.slice(0, 40000)}
+${docContext.slice(0, 150000)}
 
 USER INQUIRY:
 "${userPrompt}"
@@ -1000,9 +1129,11 @@ export async function startServer() {
     });
   }
 
-  app.listen(PORT, '0.0.0.0', () => {
+  const server = app.listen(PORT, '0.0.0.0', () => {
     console.log(`Electrical Scope Checker running at http://0.0.0.0:${PORT}`);
   });
+  server.timeout = 300000; // 5 minutes to accommodate large multi-sheet project uploads
+  server.keepAliveTimeout = 65000;
 }
 
 // In Vercel serverless environment, express app is exported

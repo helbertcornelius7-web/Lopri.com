@@ -217,45 +217,47 @@ export const PdfProjectProvider: React.FC<{ children: React.ReactNode }> = ({ ch
   }, [project.id]);
 
   // Upload PDFs into Unified Global State & Backend
+  // Upload PDFs into Unified Global State & Backend (optimized for heavy projects)
   const uploadPdfFiles = useCallback(async (
     files: File[], 
     categories?: Record<string, 'drawing' | 'specification'>, 
     projectName = 'Custom Electrical Scope Project'
   ): Promise<Project> => {
-    // 1. Convert all files to base64 & extract client text immediately
-    const convertedPdfs: PdfContextFile[] = [];
+    // 1. Create project on backend
+    const projData = await apiClient.createProject(
+      projectName,
+      `Uploaded ${files.length} electrical documents for grounded cross-checking.`
+    );
 
+    // 2. Transmit files directly to backend for high-capacity multi-page parsing
+    const uploaded = await apiClient.uploadDocuments(projData.id, files, categories);
+
+    // 3. Populate pdfFiles with accurately extracted pages and sheets from backend
+    const convertedPdfs: PdfContextFile[] = [];
     for (let i = 0; i < files.length; i++) {
       const file = files[i];
+      const doc = uploaded.documents.find((d) => d.name === file.name) || uploaded.documents[i];
       let base64 = '';
-      try {
-        base64 = await fileToBase64(file);
-      } catch (e) {
-        console.warn('Base64 encoding error for file:', file.name, e);
+      // Only compute base64 in browser memory for files <= 15MB to prevent thread freeze
+      if (file.size <= 15 * 1024 * 1024) {
+        try {
+          base64 = await fileToBase64(file);
+        } catch (e) {
+          console.warn('Base64 encoding skipped for file:', file.name);
+        }
       }
 
-      const assignedCategory = categories?.[file.name] || 
+      const assignedCategory = categories?.[file.name] || doc?.category || 
         (/E\d|drawing|plan|schematic|dwg|single-line|schedule/i.test(file.name) ? 'drawing' : 'specification');
 
-      let parsedPages = [];
-      try {
-        const extracted = await extractPdfTextInBrowser(file);
-        parsedPages = extracted.pages.map((p) => ({
-          ...p,
-          text: sanitizePdfText(p.text),
-        }));
-      } catch (err) {
-        console.warn('Browser extraction error:', err);
-      }
-
       convertedPdfs.push({
-        id: `pdf-${Date.now()}-${i}`,
+        id: doc?.id || `pdf-${Date.now()}-${i}`,
         name: file.name,
         size: file.size,
         category: assignedCategory,
         base64,
-        text: sanitizePdfText(parsedPages.map((p) => p.text).join('\n\n')),
-        pages: parsedPages,
+        text: doc ? sanitizePdfText(doc.pages.map((p) => p.text).join('\n\n')) : '',
+        pages: doc ? doc.pages : [],
       });
     }
 
@@ -265,13 +267,7 @@ export const PdfProjectProvider: React.FC<{ children: React.ReactNode }> = ({ ch
       setActivePdfId(convertedPdfs[0].id);
     }
 
-    // 2. Transmit to server & backend scope pipeline
-    const projData = await apiClient.createProject(
-      projectName,
-      `Uploaded ${files.length} electrical documents for grounded cross-checking.`
-    );
-
-    const uploaded = await apiClient.uploadDocuments(projData.id, files, categories);
+    // 4. Run AI cross-check analysis
     const analyzed = await apiClient.analyzeProject(uploaded.id);
 
     setProject(analyzed);

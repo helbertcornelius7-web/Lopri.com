@@ -120,9 +120,15 @@ export const apiClient = {
             return data.project;
           }
           backendSucceeded = true;
+        } else {
+          const errData = await res.json().catch(() => null);
+          throw new Error(errData?.error || `Upload failed with HTTP status ${res.status}`);
         }
-      } catch (err) {
-        console.warn('Backend document upload failed (404/network), extracting in browser:', err);
+      } catch (err: any) {
+        console.warn('Backend document upload error:', err);
+        if (err.message && !err.message.includes('Failed to fetch')) {
+          throw err;
+        }
       }
     }
 
