@@ -284,9 +284,15 @@ export const StudioBuildHome: React.FC<StudioBuildHomeProps> = React.memo(({
           ) : project.findings.length === 0 ? (
             <div className="w-full bg-white rounded-2xl border border-slate-200 p-8 text-center space-y-3 shadow-2xs">
               <CheckCircle2 className="w-8 h-8 text-emerald-500 mx-auto" />
-              <h3 className="text-sm font-bold text-slate-900">Documents Loaded — Ready for Scope Check</h3>
+              <h3 className="text-sm font-bold text-slate-900">
+                {project.processingSteps[4]?.status === 'completed'
+                  ? 'Scope Coordination Verified — No Discrepancies Detected'
+                  : 'Documents Loaded — Ready for Scope Check'}
+              </h3>
               <p className="text-xs text-slate-500 max-w-md mx-auto">
-                {project.documents.length} document(s) uploaded. Click "Run Scope Check" to cross-reference drawing sheets against Division 26 specifications.
+                {project.processingSteps[4]?.status === 'completed'
+                  ? 'All uploaded drawing sheets and specification sections have been cross-checked. No scope conflicts, missing disconnect switches, or metallurgy gaps were found.'
+                  : `${project.documents.length} document(s) uploaded. Click "Run Scope Check" in the top bar to cross-reference drawing sheets against Division 26 specifications.`}
               </p>
               <div className="pt-2">
                 <button

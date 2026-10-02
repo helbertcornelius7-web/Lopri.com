@@ -8,43 +8,33 @@ import {
 } from './clientScopeEngine';
 import { sanitizePdfText } from '../utils/sanitizePdfText';
 
-// Detect if running in static Vercel frontend or serverless environment without active Node server
-const isVercel = typeof window !== 'undefined' && (
-  window.location.hostname.includes('vercel.app') ||
-  window.location.hostname.includes('.vercel.')
-);
-
-// Unified API Client with Automatic Fallback for Vercel/Static Deployments
+// Unified API Client with Automatic Fallback
 export const apiClient = {
   // 1. Get all projects
   async getProjects(): Promise<Project[]> {
-    if (!isVercel) {
-      try {
-        const res = await fetch('/api/projects');
-        if (res.ok) {
-          const serverProjects = await res.json();
-          if (Array.isArray(serverProjects)) {
-            return serverProjects;
-          }
+    try {
+      const res = await fetch('/api/projects');
+      if (res.ok) {
+        const serverProjects = await res.json();
+        if (Array.isArray(serverProjects)) {
+          return serverProjects;
         }
-      } catch (err) {
-        console.warn('Backend /api/projects unreachable, reading from client store:', err);
       }
+    } catch (err) {
+      console.warn('Backend /api/projects unreachable, reading from client store:', err);
     }
     return getLocalProjects();
   },
 
   // 2. Get single project
   async getProject(projectId: string): Promise<Project | null> {
-    if (!isVercel) {
-      try {
-        const res = await fetch(`/api/projects/${projectId}`);
-        if (res.ok) {
-          return await res.json();
-        }
-      } catch (err) {
-        console.warn(`Backend /api/projects/${projectId} error, using client store:`, err);
+    try {
+      const res = await fetch(`/api/projects/${projectId}`);
+      if (res.ok) {
+        return await res.json();
       }
+    } catch (err) {
+      console.warn(`Backend /api/projects/${projectId} error, using client store:`, err);
     }
 
     const locals = getLocalProjects();
@@ -53,22 +43,20 @@ export const apiClient = {
 
   // 3. Create project
   async createProject(name: string, description?: string): Promise<Project> {
-    if (!isVercel) {
-      try {
-        const res = await fetch('/api/projects', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ name, description }),
-        });
+    try {
+      const res = await fetch('/api/projects', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name, description }),
+      });
 
-        if (res.ok) {
-          const data = await res.json();
-          saveLocalProject(data);
-          return data;
-        }
-      } catch (err) {
-        console.warn('Backend /api/projects POST failed (404/network), falling back to client engine:', err);
+      if (res.ok) {
+        const data = await res.json();
+        saveLocalProject(data);
+        return data;
       }
+    } catch (err) {
+      console.warn('Backend /api/projects POST failed, falling back to local store:', err);
     }
 
     // Client-side fallback creation
@@ -98,41 +86,31 @@ export const apiClient = {
     files: File[], 
     categories?: Record<string, 'drawing' | 'specification'>
   ): Promise<Project> {
-    // Attempt backend upload first if not running on static Vercel
-    let backendSucceeded = false;
-    if (!isVercel) {
-      try {
-        const formData = new FormData();
-        files.forEach((f) => formData.append('files', f));
-        if (categories) {
-          formData.append('categories', JSON.stringify(categories));
-        }
+    // Attempt backend upload first
+    try {
+      const formData = new FormData();
+      files.forEach((f) => formData.append('files', f));
+      if (categories) {
+        formData.append('categories', JSON.stringify(categories));
+      }
 
-        const res = await fetch(`/api/projects/${projectId}/documents`, {
-          method: 'POST',
-          body: formData,
-        });
+      const res = await fetch(`/api/projects/${projectId}/documents`, {
+        method: 'POST',
+        body: formData,
+      });
 
-        if (res.ok) {
-          const data = await res.json();
-          if (data.project) {
-            saveLocalProject(data.project);
-            return data.project;
-          }
-          backendSucceeded = true;
-        } else {
-          const errData = await res.json().catch(() => null);
-          throw new Error(errData?.error || `Upload failed with HTTP status ${res.status}`);
-        }
-      } catch (err: any) {
-        console.warn('Backend document upload error:', err);
-        if (err.message && !err.message.includes('Failed to fetch')) {
-          throw err;
+      if (res.ok) {
+        const data = await res.json();
+        if (data.project) {
+          saveLocalProject(data.project);
+          return data.project;
         }
       }
+    } catch (err: any) {
+      console.warn('Backend document upload error, proceeding with browser PDF.js engine:', err);
     }
 
-    // If backend upload failed (or 404 on Vercel), parse PDFs directly in browser
+    // If backend upload failed, parse PDFs directly in browser using Mozilla PDF.js
     let currentProject = await this.getProject(projectId);
     if (!currentProject) {
       currentProject = {
@@ -198,22 +176,26 @@ export const apiClient = {
 
   // 5. Analyze Project / Cross-Check
   async analyzeProject(projectId: string): Promise<Project> {
-    if (!isVercel) {
-      try {
-        const res = await fetch(`/api/projects/${projectId}/analyze`, {
+    try {
+      let res = await fetch(`/api/projects/${projectId}/cross-check`, {
+        method: 'POST',
+      });
+
+      if (!res.ok) {
+        res = await fetch(`/api/projects/${projectId}/analyze`, {
           method: 'POST',
         });
-
-        if (res.ok) {
-          const data = await res.json();
-          if (data.project) {
-            saveLocalProject(data.project);
-            return data.project;
-          }
-        }
-      } catch (err) {
-        console.warn('Backend analyze failed (404/network), executing client scope engine:', err);
       }
+
+      if (res.ok) {
+        const data = await res.json();
+        if (data.project) {
+          saveLocalProject(data.project);
+          return data.project;
+        }
+      }
+    } catch (err) {
+      console.warn('Backend analyze failed, executing grounded client scope engine:', err);
     }
 
     // Client-side cross-check analysis
@@ -295,7 +277,7 @@ export const apiClient = {
     }
   },
 
-  // 8. Chat with project - passes user prompt and PDF base64 context
+  // 8. Chat with project - passes user prompt and PDF context
   async chatWithProject(projectId: string, query: string, pdfBase64?: string): Promise<ChatMessage> {
     const payload = {
       userPrompt: query,
@@ -339,7 +321,7 @@ export const apiClient = {
         };
       }
     } catch (e) {
-      console.warn('Backend chat unreachable, performing client search:', e);
+      console.warn('Backend chat unreachable, performing grounded client search:', e);
     }
 
     // Client-side search & citation fallback
@@ -429,31 +411,26 @@ export const apiClient = {
 
   // 9. Reset workspace (wipes all projects for clean slate)
   async resetWorkspace(): Promise<void> {
-    if (!isVercel) {
-      try {
-        await fetch('/api/projects/reset-demo', { method: 'POST' });
-      } catch (e) {
-        // Ignore
-      }
+    try {
+      await fetch('/api/projects/reset-demo', { method: 'POST' });
+    } catch (e) {
+      // Ignore
     }
     saveLocalProjects([]);
   },
 
   // 10. Load optional sample demo project on demand
   async loadSampleDemo(): Promise<Project> {
-    if (!isVercel) {
-      try {
-        const res = await fetch('/api/projects/load-sample', { method: 'POST' });
-        if (res.ok) {
-          const sample = await res.json();
-          saveLocalProject(sample);
-          return sample;
-        }
-      } catch (e) {
-        console.warn('Backend load-sample error, using local demo data:', e);
+    try {
+      const res = await fetch('/api/projects/load-sample', { method: 'POST' });
+      if (res.ok) {
+        const sample = await res.json();
+        saveLocalProject(sample);
+        return sample;
       }
+    } catch (e) {
+      console.warn('Backend load-sample error, using local demo data:', e);
     }
-    // Fallback using SAMPLE_PROJECT from demoData
     const { SAMPLE_PROJECT } = await import('../demoData');
     saveLocalProject(SAMPLE_PROJECT);
     return SAMPLE_PROJECT;
@@ -461,12 +438,10 @@ export const apiClient = {
 
   // 11. Delete project
   async deleteProject(projectId: string): Promise<void> {
-    if (!isVercel) {
-      try {
-        await fetch(`/api/projects/${projectId}`, { method: 'DELETE' });
-      } catch (e) {
-        console.warn('Backend delete project error:', e);
-      }
+    try {
+      await fetch(`/api/projects/${projectId}`, { method: 'DELETE' });
+    } catch (e) {
+      console.warn('Backend delete project error:', e);
     }
     const locals = getLocalProjects().filter((p) => p.id !== projectId);
     saveLocalProjects(locals);

@@ -482,7 +482,8 @@ LOOK SPECIFICALLY FOR:
 CRITICAL ANTI-HALLUCINATION RULES:
 - NEVER invent specification sections, page numbers, drawing sheet names, equipment tags, or electrical requirements.
 - ONLY cite facts present in the text below.
-- If evidence is weak or not conclusively found, DO NOT invent a finding.
+- IF NO DISCREPANCIES, CONFLICTS, OR GAPS EXIST IN THE PROVIDED TEXT, RETURN AN EMPTY ARRAY []! DO NOT create synthetic, generic, or speculative findings.
+- Every quote in relevantText and highlightSnippet MUST be an exact verbatim substring from the provided document text. If you cannot quote verbatim from the text, you MUST NOT create the finding.
 - Use cautious, professional language: "Potentially missing", "I could not find...", "The available documents indicate...", "Needs estimator review".
 - Never say "Your estimate is wrong" or "Definitely missing".
 - Every finding MUST provide exact evidence for BOTH Source A (Specification) and Source B (Drawing) with exact document names, sections/sheets, pages, and relevant text quotes.
@@ -665,43 +666,8 @@ ${drawingSummaries}
         }
       }
 
-      // If no specific keyword overlaps were found, create a baseline verification item using the user's actual uploaded documents
-      if (newFindings.length === 0 && specs.length > 0 && drawings.length > 0) {
-        newFindings.push({
-          id: `finding-${Date.now()}-0`,
-          projectId: project.id,
-          title: 'Drawing Schedule vs. Specification Index Cross-Check',
-          type: 'SCOPE_GAP',
-          confidence: 'MEDIUM',
-          confidenceRationale: 'Indexed document cross-reference',
-          systemArea: 'General Electrical',
-          explanation: `Cross-checked specification package (${specs[0].name}) against drawing package (${drawings[0].name}). Estimator review recommended to verify equipment schedules against specification sections.`,
-          sourceA: {
-            id: `src-a-${Date.now()}-0`,
-            type: 'specification',
-            documentId: specs[0].id,
-            documentName: specs[0].name,
-            sectionNumber: specs[0].pages[0]?.sheetOrSection,
-            pageNumber: specs[0].pages[0]?.pageNumber || 1,
-            location: `Page ${specs[0].pages[0]?.pageNumber || 1}`,
-            relevantText: specs[0].pages[0]?.text?.slice(0, 180) || 'Specification package indexed.',
-            highlightSnippet: specs[0].pages[0]?.text?.slice(0, 50) || 'Specification package',
-          },
-          sourceB: {
-            id: `src-b-${Date.now()}-0`,
-            type: 'drawing',
-            documentId: drawings[0].id,
-            documentName: drawings[0].name,
-            sheetNumber: drawings[0].pages[0]?.sheetOrSection,
-            pageNumber: drawings[0].pages[0]?.pageNumber || 1,
-            location: `Page ${drawings[0].pages[0]?.pageNumber || 1}`,
-            relevantText: drawings[0].pages[0]?.text?.slice(0, 180) || 'Drawing package indexed.',
-            highlightSnippet: drawings[0].pages[0]?.text?.slice(0, 50) || 'Drawing package',
-          },
-          status: 'PENDING',
-          estimatorNotes: '',
-        });
-      }
+      // If no issues were detected with verified quotes, keep newFindings as empty array ([]).
+      // We NEVER invent or force synthetic findings for the estimator.
     }
 
     project.findings = newFindings;
