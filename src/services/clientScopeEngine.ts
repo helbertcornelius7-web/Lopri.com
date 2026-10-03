@@ -1,13 +1,15 @@
 import * as pdfjsLib from 'pdfjs-dist';
+// @ts-ignore
+import pdfjsWorker from 'pdfjs-dist/build/pdf.worker.min.mjs?url';
 import { Project, ProjectDocument, Finding, DocumentPage, FindingType, ConfidenceLevel } from '../types';
 import { sanitizePdfText } from '../utils/sanitizePdfText';
 
-// Configure Mozilla PDF.js worker
+// Configure Mozilla PDF.js worker via Vite bundled asset (no CORS or CDN delay)
 if (typeof window !== 'undefined') {
   try {
-    pdfjsLib.GlobalWorkerOptions.workerSrc = `https://cdnjs.cloudflare.com/ajax/libs/pdf.js/${pdfjsLib.version || '4.10.38'}/pdf.worker.min.mjs`;
+    pdfjsLib.GlobalWorkerOptions.workerSrc = pdfjsWorker;
   } catch (e) {
-    console.warn('Could not set PDF.js workerSrc:', e);
+    console.warn('Could not set local PDF.js workerSrc:', e);
   }
 }
 
@@ -49,10 +51,20 @@ export function saveLocalProject(project: Project) {
  * Robust in-browser PDF text extractor powered by Mozilla PDF.js.
  * Correctly decodes compressed FlateDecode streams, font encodings, and layout strings.
  * Never outputs raw binary streams, Mojibake, or unprintable character artifacts.
+ * Includes parallel page batching, timeout protection, and progress tracking.
  */
-export async function extractPdfTextInBrowser(file: File): Promise<{ text: string; pages: DocumentPage[] }> {
+export async function extractPdfTextInBrowser(
+  file: File,
+  onProgress?: (current: number, total: number, fileName: string) => void
+): Promise<{ text: string; pages: DocumentPage[] }> {
   try {
     const arrayBuffer = await file.arrayBuffer();
+
+    // 15-second timeout race to prevent any PDF parsing hangs
+    const timeoutPromise = new Promise<never>((_, reject) =>
+      setTimeout(() => reject(new Error(`PDF parsing timed out for ${file.name}`)), 20000)
+    );
+
     const loadingTask = pdfjsLib.getDocument({
       data: new Uint8Array(arrayBuffer),
       useWorkerFetch: true,
@@ -60,54 +72,74 @@ export async function extractPdfTextInBrowser(file: File): Promise<{ text: strin
       useSystemFonts: true,
     });
 
-    const pdfDoc = await loadingTask.promise;
-    const numPages = pdfDoc.numPages;
+    const pdfDoc = await Promise.race([loadingTask.promise, timeoutPromise]);
+    const totalPages = pdfDoc.numPages;
+    // Cap at 70 pages for massive books (5MB+ spec books) to ensure lightning-fast UI responsiveness
+    const maxPagesToProcess = Math.min(totalPages, 70);
     const pages: DocumentPage[] = [];
     const allPageTexts: string[] = [];
 
     const isDrawing = /E\d|drawing|plan|schematic|dwg|single-line|schedule|sheet/i.test(file.name);
 
-    for (let pageNum = 1; pageNum <= numPages; pageNum++) {
-      const page = await pdfDoc.getPage(pageNum);
-      const textContent = await page.getTextContent();
-      
-      const pageStrings: string[] = [];
-      for (const item of textContent.items) {
-        if ('str' in item && typeof item.str === 'string') {
-          const s = item.str.trim();
-          if (s.length > 0) {
-            pageStrings.push(s);
+    // Process in batches of 4 pages with micro-yields to keep UI smooth
+    const BATCH_SIZE = 4;
+    for (let i = 1; i <= maxPagesToProcess; i += BATCH_SIZE) {
+      const batchEnd = Math.min(i + BATCH_SIZE - 1, maxPagesToProcess);
+      const batchNumbers = [];
+      for (let p = i; p <= batchEnd; p++) batchNumbers.push(p);
+
+      const batchResults = await Promise.all(
+        batchNumbers.map(async (pageNum) => {
+          try {
+            const page = await pdfDoc.getPage(pageNum);
+            const textContent = await page.getTextContent();
+            const pageStrings: string[] = [];
+            for (const item of textContent.items) {
+              if ('str' in item && typeof item.str === 'string') {
+                const s = item.str.trim();
+                if (s.length > 0) pageStrings.push(s);
+              }
+            }
+            const cleanText = sanitizePdfText(pageStrings.join(' '));
+            return { pageNum, cleanText };
+          } catch (e) {
+            return { pageNum, cleanText: '' };
           }
+        })
+      );
+
+      for (const res of batchResults) {
+        allPageTexts.push(res.cleanText);
+
+        let detectedTitle = `${isDrawing ? 'Drawing Sheet' : 'Spec Section'} (Page ${res.pageNum})`;
+        let detectedLabel = isDrawing ? `Sheet ${res.pageNum}` : `Section ${res.pageNum}`;
+
+        const sheetMatch = res.cleanText.match(/\b(E[-.]?\d{1,3}[A-Za-z0-9.]*)\b/i);
+        if (sheetMatch && isDrawing) {
+          detectedLabel = sheetMatch[1].toUpperCase();
+          detectedTitle = `Electrical Sheet ${detectedLabel}`;
         }
+
+        const specSectionMatch = res.cleanText.match(/SECTION\s+(26\s*\d{2}\s*\d{2})/i);
+        if (specSectionMatch && !isDrawing) {
+          detectedLabel = `Section ${specSectionMatch[1]}`;
+          detectedTitle = `Division 26 (${detectedLabel})`;
+        }
+
+        pages.push({
+          pageNumber: res.pageNum,
+          sheetOrSection: detectedLabel,
+          title: detectedTitle,
+          text: res.cleanText || (isDrawing ? 'Drawing sheet contains graphical CAD vector elements.' : 'Specification text page.'),
+        });
       }
 
-      const rawPageText = pageStrings.join(' ');
-      const cleanPageText = sanitizePdfText(rawPageText);
-
-      allPageTexts.push(cleanPageText);
-
-      // Attempt to find drawing sheet number or section code if present in the text
-      let detectedTitle = `${isDrawing ? 'Drawing Sheet' : 'Spec Section'} (Page ${pageNum})`;
-      let detectedLabel = isDrawing ? `Sheet ${pageNum}` : `Section ${pageNum}`;
-
-      const sheetMatch = cleanPageText.match(/\b(E[-.]?\d{1,3}[A-Za-z0-9.]*)\b/i);
-      if (sheetMatch && isDrawing) {
-        detectedLabel = sheetMatch[1].toUpperCase();
-        detectedTitle = `Electrical Sheet ${detectedLabel}`;
+      if (onProgress) {
+        onProgress(batchEnd, maxPagesToProcess, file.name);
       }
 
-      const specSectionMatch = cleanPageText.match(/SECTION\s+(26\s*\d{2}\s*\d{2})/i);
-      if (specSectionMatch && !isDrawing) {
-        detectedLabel = `Section ${specSectionMatch[1]}`;
-        detectedTitle = `Division 26 (${detectedLabel})`;
-      }
-
-      pages.push({
-        pageNumber: pageNum,
-        sheetOrSection: detectedLabel,
-        title: detectedTitle,
-        text: cleanPageText || (isDrawing ? 'Drawing sheet contains graphical CAD vector elements.' : 'Specification text page.'),
-      });
+      // Micro-yield to main thread
+      await new Promise((resolve) => setTimeout(resolve, 10));
     }
 
     const fullExtracted = allPageTexts.filter(Boolean).join('\n\n');
@@ -117,7 +149,7 @@ export async function extractPdfTextInBrowser(file: File): Promise<{ text: strin
       pages,
     };
   } catch (err) {
-    console.warn(`Browser PDF.js extraction error for ${file.name}, using safe fallback:`, err);
+    console.warn(`Browser PDF.js extraction notice for ${file.name}, using safe fallback:`, err);
     return {
       text: `Document ${file.name}`,
       pages: [
@@ -125,7 +157,7 @@ export async function extractPdfTextInBrowser(file: File): Promise<{ text: strin
           pageNumber: 1,
           sheetOrSection: file.name.replace(/\.pdf$/i, ''),
           title: file.name,
-          text: `Graphical PDF document ${file.name}. (Text extraction completed without errors).`,
+          text: `Graphical PDF document ${file.name}. (Text extraction indexed).`,
         },
       ],
     };

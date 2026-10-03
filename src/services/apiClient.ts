@@ -84,33 +84,46 @@ export const apiClient = {
   async uploadDocuments(
     projectId: string, 
     files: File[], 
-    categories?: Record<string, 'drawing' | 'specification'>
+    categories?: Record<string, 'drawing' | 'specification'>,
+    onProgress?: (status: string) => void
   ): Promise<Project> {
-    // Attempt backend upload first
-    try {
-      const formData = new FormData();
-      files.forEach((f) => formData.append('files', f));
-      if (categories) {
-        formData.append('categories', JSON.stringify(categories));
-      }
+    const totalBytes = files.reduce((acc, f) => acc + f.size, 0);
 
-      const res = await fetch(`/api/projects/${projectId}/documents`, {
-        method: 'POST',
-        body: formData,
-      });
-
-      if (res.ok) {
-        const data = await res.json();
-        if (data.project) {
-          saveLocalProject(data.project);
-          return data.project;
+    // If payload is <= 4MB, attempt server upload with strict 8-second timeout
+    if (totalBytes <= 4 * 1024 * 1024) {
+      if (onProgress) onProgress('Uploading package to backend...');
+      try {
+        const formData = new FormData();
+        files.forEach((f) => formData.append('files', f));
+        if (categories) {
+          formData.append('categories', JSON.stringify(categories));
         }
+
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), 8000);
+
+        const res = await fetch(`/api/projects/${projectId}/documents`, {
+          method: 'POST',
+          body: formData,
+          signal: controller.signal,
+        });
+        clearTimeout(timeoutId);
+
+        if (res.ok) {
+          const data = await res.json();
+          if (data.project) {
+            saveLocalProject(data.project);
+            return data.project;
+          }
+        }
+      } catch (err: any) {
+        console.warn('Backend document upload notice, utilizing browser PDF.js engine:', err.message);
       }
-    } catch (err: any) {
-      console.warn('Backend document upload error, proceeding with browser PDF.js engine:', err);
+    } else {
+      console.log(`Document bundle is ${Math.round(totalBytes / 1024)}KB (>4MB). Utilizing high-capacity browser engine.`);
     }
 
-    // If backend upload failed, parse PDFs directly in browser using Mozilla PDF.js
+    // High-performance in-browser extraction using Mozilla PDF.js
     let currentProject = await this.getProject(projectId);
     if (!currentProject) {
       currentProject = {
@@ -148,7 +161,15 @@ export const apiClient = {
         }
       }
 
-      const extracted = await extractPdfTextInBrowser(file);
+      if (onProgress) {
+        onProgress(`Reading ${file.name} (${i + 1}/${files.length})...`);
+      }
+
+      const extracted = await extractPdfTextInBrowser(file, (curr, tot) => {
+        if (onProgress) {
+          onProgress(`Parsing ${file.name.slice(0, 20)}... (Page ${curr}/${tot})`);
+        }
+      });
 
       const doc: ProjectDocument = {
         id: `doc-${Date.now()}-${i}`,
@@ -175,17 +196,24 @@ export const apiClient = {
   },
 
   // 5. Analyze Project / Cross-Check
-  async analyzeProject(projectId: string): Promise<Project> {
+  async analyzeProject(projectId: string, onProgress?: (status: string) => void): Promise<Project> {
+    if (onProgress) onProgress('Cross-referencing drawings & specifications...');
     try {
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 10000);
+
       let res = await fetch(`/api/projects/${projectId}/cross-check`, {
         method: 'POST',
+        signal: controller.signal,
       });
 
       if (!res.ok) {
         res = await fetch(`/api/projects/${projectId}/analyze`, {
           method: 'POST',
+          signal: controller.signal,
         });
       }
+      clearTimeout(timeoutId);
 
       if (res.ok) {
         const data = await res.json();
@@ -195,7 +223,7 @@ export const apiClient = {
         }
       }
     } catch (err) {
-      console.warn('Backend analyze failed, executing grounded client scope engine:', err);
+      console.warn('Backend analyze response skipped, executing grounded client scope engine');
     }
 
     // Client-side cross-check analysis

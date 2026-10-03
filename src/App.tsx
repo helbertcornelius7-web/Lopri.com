@@ -15,6 +15,7 @@ import { FeedbackButton } from './components/FeedbackButton';
 import { UploadModal } from './components/UploadModal';
 import { PipelineStatusModal } from './components/PipelineStatusModal';
 import { ExportSummaryModal } from './components/ExportSummaryModal';
+import { DeleteProjectModal } from './components/DeleteProjectModal';
 import { Analytics } from '@vercel/analytics/react';
 import { SpeedInsights } from '@vercel/speed-insights/react';
 
@@ -55,6 +56,7 @@ function AppContent() {
   const [isUploadOpen, setIsUploadOpen] = useState(false);
   const [isPipelineOpen, setIsPipelineOpen] = useState(false);
   const [isExportOpen, setIsExportOpen] = useState(false);
+  const [projectToDelete, setProjectToDelete] = useState<Project | null>(null);
 
   const handleAccept = useCallback((findingId: string) => updateFindingStatus(findingId, 'ACCEPTED'), [updateFindingStatus]);
   const handleReject = useCallback((findingId: string) => updateFindingStatus(findingId, 'REJECTED'), [updateFindingStatus]);
@@ -95,6 +97,7 @@ function AppContent() {
         project={project}
         allProjects={allProjects}
         onSelectProject={(id) => loadProject(id)}
+        onRequestDeleteProject={(p) => setProjectToDelete(p)}
         isLeftOpen={isLeftOpen}
         onToggleLeft={() => setIsLeftOpen((prev) => !prev)}
         isRightOpen={isRightOpen}
@@ -115,6 +118,9 @@ function AppContent() {
         {isLeftOpen && (
           <StudioSidebar
             project={project}
+            allProjects={allProjects}
+            onSelectProject={(id) => loadProject(id)}
+            onRequestDeleteProject={(p) => setProjectToDelete(p)}
             currentView={currentView}
             onChangeView={setCurrentView}
             selectedFindingId={selectedFindingId}
@@ -133,6 +139,7 @@ function AppContent() {
         {currentView === 'home' || currentView === 'gallery' ? (
           <StudioBuildHome
             project={project}
+            onRequestDeleteProject={(p) => setProjectToDelete(p)}
             onSelectFinding={(f) => {
               setSelectedFindingId(f.id);
               setCurrentView('playground');
@@ -201,6 +208,17 @@ function AppContent() {
         isOpen={isExportOpen}
         onClose={() => setIsExportOpen(false)}
         project={project}
+      />
+
+      {/* Delete Project Confirmation Modal */}
+      <DeleteProjectModal
+        isOpen={Boolean(projectToDelete)}
+        project={projectToDelete}
+        onClose={() => setProjectToDelete(null)}
+        onConfirmDelete={async (id) => {
+          await deleteProject(id);
+          setProjectToDelete(null);
+        }}
       />
 
       {/* Floating Feedback Button */}

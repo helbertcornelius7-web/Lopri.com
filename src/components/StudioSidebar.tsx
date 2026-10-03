@@ -24,11 +24,16 @@ import {
   HelpCircle,
   CheckCircle2,
   Clock,
-  XCircle
+  XCircle,
+  Trash2,
+  Folder
 } from 'lucide-react';
 
 interface StudioSidebarProps {
   project: Project;
+  allProjects?: Project[];
+  onSelectProject?: (id: string) => void;
+  onRequestDeleteProject?: (project: Project) => void;
   currentView: 'home' | 'playground' | 'history' | 'gallery';
   onChangeView: (view: 'home' | 'playground' | 'history' | 'gallery') => void;
   selectedFindingId: string | null;
@@ -41,6 +46,9 @@ interface StudioSidebarProps {
 
 export const StudioSidebar: React.FC<StudioSidebarProps> = React.memo(({
   project,
+  allProjects = [],
+  onSelectProject = (_id: string) => {},
+  onRequestDeleteProject,
   currentView,
   onChangeView,
   selectedFindingId,
@@ -154,6 +162,60 @@ export const StudioSidebar: React.FC<StudioSidebarProps> = React.memo(({
             <LayoutTemplate className="w-4 h-4 text-slate-500" />
             <span>Discrepancies & Gaps</span>
           </button>
+
+          {/* Projects List & Active Project Management */}
+          {allProjects.length > 0 && (
+            <div className="pt-2 border-t border-slate-100 space-y-1">
+              <div className="text-[11px] font-bold uppercase tracking-wider text-slate-400 px-2 flex items-center justify-between">
+                <span>PROJECTS</span>
+                <span className="font-mono text-slate-500 text-[10px]">{allProjects.length}</span>
+              </div>
+
+              <div className="space-y-1 max-h-48 overflow-y-auto pr-0.5">
+                {allProjects.map((p) => {
+                  const isActive = p.id === project.id;
+                  const docCount = p.documents ? p.documents.length : ((p as any).documentCount ?? 0);
+                  return (
+                    <div
+                      key={p.id}
+                      className={`group flex items-center justify-between p-2 rounded-xl text-xs transition-all border ${
+                        isActive
+                          ? 'bg-amber-50/80 border-amber-300 text-slate-900 font-semibold shadow-2xs'
+                          : 'bg-white hover:bg-slate-50 border-slate-200 text-slate-700'
+                      }`}
+                    >
+                      <button
+                        type="button"
+                        onClick={() => onSelectProject(p.id)}
+                        className="flex items-center gap-2 min-w-0 flex-1 text-left cursor-pointer"
+                        title={p.name}
+                      >
+                        <Folder className={`w-3.5 h-3.5 shrink-0 ${isActive ? 'text-amber-600' : 'text-slate-400'}`} />
+                        <div className="truncate flex-1">
+                          <div className="truncate text-xs leading-snug">{p.name}</div>
+                          <div className="text-[10px] text-slate-400 font-normal">{docCount} doc(s)</div>
+                        </div>
+                      </button>
+
+                      {onRequestDeleteProject && (
+                        <button
+                          type="button"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            onRequestDeleteProject(p);
+                          }}
+                          title={`Delete "${p.name}"`}
+                          className="opacity-70 sm:opacity-0 sm:group-hover:opacity-100 p-1.5 rounded-lg text-slate-400 hover:text-rose-600 hover:bg-rose-50 transition-all ml-1 shrink-0"
+                        >
+                          <Trash2 className="w-3.5 h-3.5" />
+                        </button>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          )}
 
           {/* Commercial Medical Center (Demo) - Click to load and explore AI Scope Analysis */}
           <div className="pt-1.5">

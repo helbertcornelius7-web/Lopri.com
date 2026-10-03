@@ -15,13 +15,15 @@ import {
   Play,
   Settings,
   Terminal,
-  LayoutGrid
+  LayoutGrid,
+  Trash2
 } from 'lucide-react';
 
 interface StudioHeaderProps {
   project: Project;
   allProjects: Array<{ id: string; name: string; status: string; findingsCount: number }>;
   onSelectProject: (id: string) => void;
+  onRequestDeleteProject?: (project: Project) => void;
   isLeftOpen: boolean;
   onToggleLeft: () => void;
   isRightOpen: boolean;
@@ -40,6 +42,7 @@ export const StudioHeader: React.FC<StudioHeaderProps> = React.memo(({
   project,
   allProjects = [],
   onSelectProject = (_id: string) => {},
+  onRequestDeleteProject,
   isLeftOpen = true,
   onToggleLeft = () => {},
   isRightOpen = true,
@@ -122,6 +125,18 @@ export const StudioHeader: React.FC<StudioHeaderProps> = React.memo(({
               </select>
               <ChevronDown className="w-3 h-3 text-slate-400 pointer-events-none absolute right-2 top-1/2 -translate-y-1/2" />
             </div>
+
+            {/* Quick Delete Project button in header */}
+            {project.id && onRequestDeleteProject && (
+              <button
+                type="button"
+                onClick={() => onRequestDeleteProject(project)}
+                className="hidden sm:flex p-1.5 rounded-md text-slate-400 hover:text-rose-600 hover:bg-rose-50 transition-colors"
+                title={`Delete "${project.name}"`}
+              >
+                <Trash2 className="w-3.5 h-3.5" />
+              </button>
+            )}
           </>
         )}
       </div>

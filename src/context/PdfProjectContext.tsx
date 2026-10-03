@@ -43,7 +43,8 @@ interface PdfProjectContextType {
   uploadPdfFiles: (
     files: File[], 
     categories?: Record<string, 'drawing' | 'specification'>, 
-    projectName?: string
+    projectName?: string,
+    onProgress?: (status: string) => void
   ) => Promise<Project>;
   runScopeCheck: () => Promise<Project>;
   resetWorkspace: () => Promise<void>;
@@ -221,25 +222,28 @@ export const PdfProjectProvider: React.FC<{ children: React.ReactNode }> = ({ ch
   const uploadPdfFiles = useCallback(async (
     files: File[], 
     categories?: Record<string, 'drawing' | 'specification'>, 
-    projectName = 'Custom Electrical Scope Project'
+    projectName = 'Custom Electrical Scope Project',
+    onProgress?: (status: string) => void
   ): Promise<Project> => {
+    if (onProgress) onProgress('Initializing project...');
     // 1. Create project on backend
     const projData = await apiClient.createProject(
       projectName,
       `Uploaded ${files.length} electrical documents for grounded cross-checking.`
     );
 
-    // 2. Transmit files directly to backend for high-capacity multi-page parsing
-    const uploaded = await apiClient.uploadDocuments(projData.id, files, categories);
+    // 2. Transmit files directly to backend or high-capacity browser engine
+    const uploaded = await apiClient.uploadDocuments(projData.id, files, categories, onProgress);
 
-    // 3. Populate pdfFiles with accurately extracted pages and sheets from backend
+    // 3. Populate pdfFiles with accurately extracted pages and sheets
+    if (onProgress) onProgress('Structuring sheets & review canvas...');
     const convertedPdfs: PdfContextFile[] = [];
     for (let i = 0; i < files.length; i++) {
       const file = files[i];
       const doc = uploaded.documents.find((d) => d.name === file.name) || uploaded.documents[i];
       let base64 = '';
-      // Only compute base64 in browser memory for files <= 15MB to prevent thread freeze
-      if (file.size <= 15 * 1024 * 1024) {
+      // Only compute base64 in browser memory for files <= 8MB to prevent thread freeze
+      if (file.size <= 8 * 1024 * 1024) {
         try {
           base64 = await fileToBase64(file);
         } catch (e) {
@@ -268,7 +272,7 @@ export const PdfProjectProvider: React.FC<{ children: React.ReactNode }> = ({ ch
     }
 
     // 4. Run AI cross-check analysis
-    const analyzed = await apiClient.analyzeProject(uploaded.id);
+    const analyzed = await apiClient.analyzeProject(uploaded.id, onProgress);
 
     setProject(analyzed);
     setAllProjects((prev) => [analyzed, ...prev.filter((p) => p.id !== analyzed.id)]);
