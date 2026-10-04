@@ -185,14 +185,14 @@ export const StudioHeader: React.FC<StudioHeaderProps> = React.memo(({
           <span>Upload PDFs</span>
         </button>
 
-        {/* Export Log */}
+        {/* Export PDF */}
         <button
           onClick={onOpenExport}
           className="hidden md:flex items-center gap-1.5 text-xs font-medium px-2.5 py-1.5 rounded-md bg-slate-100 hover:bg-slate-200 text-slate-700 border border-slate-200 transition-colors"
-          title="Export Scope Review Summary Log"
+          title="Export Scope & RFI PDF Report"
         >
           <Download className="w-3.5 h-3.5 text-slate-500" />
-          <span>Export Log</span>
+          <span>Export PDF</span>
         </button>
 
         {/* Feedback Button (Tally Widget) */}

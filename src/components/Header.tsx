@@ -146,14 +146,14 @@ export const Header: React.FC<HeaderProps> = ({
             <span className="hidden md:inline">Ask AI</span>
           </button>
 
-          {/* Export Log Button */}
+          {/* Export PDF Button */}
           <button
             onClick={onOpenExport}
             className="flex items-center gap-1.5 text-xs px-2.5 py-1.5 rounded-lg bg-slate-100 hover:bg-slate-200 text-slate-700 border border-slate-200 font-medium transition-colors"
-            title="Export Estimator Findings Review Log"
+            title="Export Scope & RFI PDF Report"
           >
             <Download className="w-3.5 h-3.5 text-slate-500" />
-            <span className="hidden md:inline">Export Log</span>
+            <span className="hidden md:inline">Export PDF</span>
           </button>
 
           {/* Reset Demo Project Button */}

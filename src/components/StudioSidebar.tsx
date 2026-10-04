@@ -284,7 +284,7 @@ export const StudioSidebar: React.FC<StudioSidebarProps> = React.memo(({
           >
             <div className="flex items-center gap-3">
               <BookOpen className="w-4 h-4 text-slate-500" />
-              <span>Estimator Scope Log</span>
+              <span>Export PDF (Scope & RFI)</span>
             </div>
             <ChevronRight className="w-3.5 h-3.5 text-slate-400" />
           </button>
@@ -372,7 +372,7 @@ export const StudioSidebar: React.FC<StudioSidebarProps> = React.memo(({
           <button 
             onClick={onOpenExport}
             className="p-1.5 rounded-lg hover:bg-slate-100 hover:text-slate-800 transition-colors" 
-            title="Export Scope Review Summary"
+            title="Export Scope & RFI PDF"
           >
             <Settings className="w-4 h-4" />
           </button>
