@@ -73,7 +73,7 @@ export function fileToBase64(file: File): Promise<string> {
 const INITIAL_WELCOME_MSG: ChatMessage = {
   id: 'msg-welcome',
   role: 'assistant',
-  content: 'Lopri AI initialized. Elite construction technology assistant specializing in Division 26 specifications and electrical estimating. Inquiries cross-reference project specifications (Source A) and drawings/schedules (Source B) with clear electrical estimation risk analysis.',
+  content: "Lopri AI initialized. Preconstruction Scope & Citation Engine specializing in Division 26 specifications and electrical estimating. Inquiries extract exact evidence quotes, map accurate location metadata, and cross-reference project specifications (Source A) against drawings/schedules (Source B) with clear electrical estimation risk analysis.",
   timestamp: new Date().toISOString(),
 };
 

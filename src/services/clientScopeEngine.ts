@@ -120,10 +120,25 @@ export async function extractPdfTextInBrowser(
           detectedTitle = `Electrical Sheet ${detectedLabel}`;
         }
 
-        const specSectionMatch = res.cleanText.match(/SECTION\s+(26\s*\d{2}\s*\d{2})/i);
-        if (specSectionMatch && !isDrawing) {
-          detectedLabel = `Section ${specSectionMatch[1]}`;
-          detectedTitle = `Division 26 (${detectedLabel})`;
+        // Decision Tree: Detect Document Index / Table of Contents vs Specific Section Body
+        const isTocOrIndex = !isDrawing && (
+          /TABLE\s+OF\s+CONTENTS|\bCONTENTS\b|DOCUMENT\s+INDEX|\bSPECIFICATION\s+INDEX\b/i.test(res.cleanText) ||
+          (res.cleanText.match(/SECTION\s+(26\s*\d{2}\s*\d{2}|\d{6})/gi) || []).length >= 3
+        );
+
+        if (isTocOrIndex) {
+          detectedLabel = 'Table of Contents (Division 26)';
+          detectedTitle = 'Document Index / Table of Contents';
+        } else {
+          const specSectionMatch = res.cleanText.match(/SECTION\s+(26\s*\d{2}\s*\d{2})/i);
+          if (specSectionMatch && !isDrawing) {
+            const secNum = `Section ${specSectionMatch[1].replace(/\s+/g, '')}`;
+            detectedLabel = secNum;
+            // Map exact Section Number and Title
+            const titleMatch = res.cleanText.match(new RegExp(`SECTION\\s+${specSectionMatch[1]}\\s+([A-Za-z0-9\\s,-]{3,50})`, 'i'));
+            const secTitle = titleMatch ? titleMatch[1].trim() : 'Division 26 Technical Specification';
+            detectedTitle = `${secNum} - ${secTitle}`;
+          }
         }
 
         pages.push({
@@ -165,6 +180,21 @@ export async function extractPdfTextInBrowser(
 }
 
 /**
+ * Decision Tree Logic 1: Truncated Boundary Words Cleaning
+ * IF an extracted snippet starts with a truncated word fragment:
+ * THEN scan immediate preceding context OR strip broken leading characters up to first complete word.
+ */
+export function cleanSnippetBoundary(rawSnippet: string): string {
+  if (!rawSnippet) return '';
+  let cleaned = rawSnippet.trim();
+  // Strip leading broken fragment before capital letter (e.g. "evices Section 263214" -> "Section 263214")
+  cleaned = cleaned.replace(/^[a-z0-9]{1,6}\s+([A-Z])/g, '$1');
+  // Strip dangling partial word at start
+  cleaned = cleaned.replace(/^[a-z]{1,4}\s+/i, '');
+  return cleaned.trim();
+}
+
+/**
  * Strict Grounded Client-Side Cross-Check Engine
  * 
  * CRITICAL ANTI-HALLUCINATION RULES:
@@ -181,6 +211,51 @@ export function runClientSideCrossCheck(project: Project): Finding[] {
   }
 
   const findings: Finding[] = [];
+
+  // Decision Tree Logic 3: Specification to Drawing Matching
+  // IF auditing Electrical Scope (Division 26 Specifications):
+  // IF uploaded drawing filename/sheet tag starts with 'A' or contains 'Arch' / 'Architectural':
+  // THEN flag a document domain warning: "Uploaded drawing is Architectural (Sheet A...). Electrical scope verification requires Electrical Drawing sheets (Sheet E...)."
+  for (const dwg of drawings) {
+    const isArch = /^(A[-.]?\d|arch|architectural)/i.test(dwg.name) || 
+      dwg.pages.some((p) => /^(A[-.]?\d|sheet\s+a)/i.test(p.sheetOrSection));
+    if (isArch) {
+      const sheetTag = dwg.pages[0]?.sheetOrSection || dwg.name.replace(/\.pdf$/i, '');
+      findings.unshift({
+        id: `client-finding-arch-warning-${dwg.id}`,
+        projectId: project.id,
+        title: 'Architectural Drawing Domain Notice',
+        type: 'DOCUMENT_CONFLICT',
+        confidence: 'HIGH',
+        confidenceRationale: 'Uploaded drawing is Architectural rather than an Electrical discipline drawing.',
+        systemArea: 'Drawing Coordination',
+        explanation: `Uploaded drawing is Architectural (Sheet ${sheetTag}). Electrical scope verification requires Electrical Drawing sheets (Sheet E...).`,
+        sourceA: {
+          id: `ev-a-arch-${dwg.id}`,
+          type: 'specification',
+          documentId: specs[0]?.id || 'spec-1',
+          documentName: specs[0]?.name || 'Division 26 Specifications',
+          sectionNumber: 'Division 26',
+          pageNumber: 1,
+          location: 'Division 26 Specification Coordination',
+          relevantText: 'Electrical scope requirements must be coordinated with designated electrical drawing sheets.',
+          highlightSnippet: 'Electrical scope requirements must be coordinated with designated electrical drawing sheets.',
+        },
+        sourceB: {
+          id: `ev-b-arch-${dwg.id}`,
+          type: 'drawing',
+          documentId: dwg.id,
+          documentName: dwg.name,
+          sheetNumber: sheetTag,
+          pageNumber: 1,
+          location: `Drawing Sheet ${sheetTag}`,
+          relevantText: `Uploaded drawing is Architectural (Sheet ${sheetTag}). Electrical scope verification requires Electrical Drawing sheets (Sheet E...).`,
+          highlightSnippet: `Uploaded drawing is Architectural (Sheet ${sheetTag}).`,
+        },
+        status: 'PENDING',
+      });
+    }
+  }
 
   // Flatten pages with text for exact matching
   const specPages = specs.flatMap((s) => 
@@ -213,11 +288,11 @@ export function runClientSideCrossCheck(project: Project): Finding[] {
     // Extract actual verbatim excerpt from specCopperPage
     const specIdx = specCopperPage.textLower.indexOf('copper');
     const specStart = Math.max(0, specIdx - 40);
-    const specSnippet = specCopperPage.rawText.slice(specStart, specStart + 160).trim();
+    const specSnippet = cleanSnippetBoundary(specCopperPage.rawText.slice(specStart, specStart + 160));
 
     const dwgIdx = dwgAluminumPage.textLower.indexOf('aluminum');
     const dwgStart = Math.max(0, dwgIdx - 40);
-    const dwgSnippet = dwgAluminumPage.rawText.slice(dwgStart, dwgStart + 160).trim();
+    const dwgSnippet = cleanSnippetBoundary(dwgAluminumPage.rawText.slice(dwgStart, dwgStart + 160));
 
     findings.push({
       id: `client-finding-${Date.now()}-metallurgy`,
@@ -265,7 +340,7 @@ export function runClientSideCrossCheck(project: Project): Finding[] {
   if (specGeneratorPage && !dwgHasGenerator) {
     const genIdx = Math.max(specGeneratorPage.textLower.indexOf('generator'), specGeneratorPage.textLower.indexOf('ats'));
     const genStart = Math.max(0, genIdx - 40);
-    const genSnippet = specGeneratorPage.rawText.slice(genStart, genStart + 160).trim();
+    const genSnippet = cleanSnippetBoundary(specGeneratorPage.rawText.slice(genStart, genStart + 160));
 
     findings.push({
       id: `client-finding-${Date.now()}-generator`,
