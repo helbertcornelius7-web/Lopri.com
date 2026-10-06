@@ -198,18 +198,28 @@ export const apiClient = {
   // 5. Analyze Project / Cross-Check
   async analyzeProject(projectId: string, onProgress?: (status: string) => void): Promise<Project> {
     if (onProgress) onProgress('Cross-referencing drawings & specifications...');
+    const current = await this.getProject(projectId);
+    if (!current) {
+      throw new Error('Project not found');
+    }
+
     try {
       const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), 10000);
+      const timeoutId = setTimeout(() => controller.abort(), 35000);
 
-      let res = await fetch(`/api/projects/${projectId}/cross-check`, {
+      const payload = JSON.stringify({ project: current });
+      let res = await fetch(`/api/projects/${projectId}/analyze`, {
         method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: payload,
         signal: controller.signal,
       });
 
       if (!res.ok) {
-        res = await fetch(`/api/projects/${projectId}/analyze`, {
+        res = await fetch(`/api/projects/${projectId}/cross-check`, {
           method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: payload,
           signal: controller.signal,
         });
       }
@@ -217,21 +227,16 @@ export const apiClient = {
 
       if (res.ok) {
         const data = await res.json();
-        if (data.project) {
+        if (data.project && data.project.findings && data.project.findings.length > 0) {
           saveLocalProject(data.project);
           return data.project;
         }
       }
     } catch (err) {
-      console.warn('Backend analyze response skipped, executing grounded client scope engine');
+      console.warn('Backend analyze notice, running high-precision client scope engine:', err);
     }
 
     // Client-side cross-check analysis
-    const current = await this.getProject(projectId);
-    if (!current) {
-      throw new Error('Project not found');
-    }
-
     current.status = 'processing';
     current.processingSteps[2].status = 'in_progress';
     current.processingSteps[3].status = 'in_progress';

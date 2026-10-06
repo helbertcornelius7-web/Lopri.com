@@ -405,9 +405,17 @@ const handleDocumentUpload = async (req: express.Request, res: express.Response)
 app.post('/api/projects/:id/upload', handleMulterUpload, handleDocumentUpload);
 app.post('/api/projects/:id/documents', handleMulterUpload, handleDocumentUpload);
 
-// 7. Run Cross-Check AI Analysis on Project
-app.post('/api/projects/:id/analyze', async (req, res) => {
-  const project = projectsStore.get(req.params.id);
+// 7. Run Cross-Check AI Analysis on Project (handles both /analyze and /cross-check)
+const handleAnalyzeProject = async (req: express.Request, res: express.Response) => {
+  let project = projectsStore.get(req.params.id);
+  if (!project && req.body && req.body.project) {
+    project = req.body.project;
+    projectsStore.set(project.id, project);
+  } else if (req.body && req.body.project && (!project || project.documents.length === 0)) {
+    project = req.body.project;
+    projectsStore.set(project.id, project);
+  }
+
   if (!project) {
     return res.status(404).json({ error: 'Project not found' });
   }
@@ -611,28 +619,116 @@ ${drawingSummaries}
 
       const checkTopics = [
         {
-          title: 'Emergency & Standby Power Circuit Distribution',
-          systemArea: 'Emergency Power Systems',
-          keywords: ['emergency', 'standby', 'generator', 'ats', 'refrigerat'],
-          explanation: 'Specification requirements for emergency/standby power circuits should be verified against drawing feeder tags and panel schedules to confirm circuit allocation and spare capacity.',
+          title: 'Arc Flash Hazard Analysis & Short Circuit Study Scope',
+          systemArea: 'Engineering Studies & Coordination',
+          type: 'SCOPE_GAP' as const,
+          keywords: ['arc flash', 'selective coordination', 'short circuit study', 'fault current study', 'power system study', '26 05 73', '260573'],
+          explanation: 'Specification mandates third-party engineering firm computer-based arc flash and short circuit coordination study with equipment warning labels. Verify if drawing general notes include engineering study allowance or designate engineer of record responsibility.',
         },
         {
-          title: 'Panelboard Bussing & Neutral Rating Specification',
+          title: 'Conductor / Bus Metallurgy Coordination (Copper vs. Aluminum)',
           systemArea: 'Power Distribution',
-          keywords: ['copper', 'aluminum', 'bus', 'neutral', 'panelboard', 'switchboard'],
-          explanation: 'Specification requires specific bus metallurgy (e.g. copper vs. aluminum) and neutral sizing. Drawing panel schedules and general notes should be verified for consistency.',
+          type: 'CONFLICT' as const,
+          keywords: ['copper', 'aluminum', 'bus', 'neutral', 'compact aluminum', 'conductor', 'feeder'],
+          explanation: 'Specification mandates 98% conductivity copper conductors/bussing, whereas drawing schedules or feeder tags note aluminum conductors. Estimator should clarify metallurgy standard prior to bid submittal.',
         },
         {
-          title: 'Lighting Control & Automatic Sensor Coverage',
+          title: 'Emergency Standby Generator & ATS Scope Coordination',
+          systemArea: 'Emergency Power Systems',
+          type: 'SCOPE_GAP' as const,
+          keywords: ['emergency', 'standby', 'generator', 'ats', 'transfer switch', 'day tank', '26 32 13', '26 36 23'],
+          explanation: 'Specification contains provisions for packaged standby generator or automatic transfer switch equipment, but drawing linework or schedules may lack corresponding feeder tags, pad details, or remote annunciator conduit.',
+        },
+        {
+          title: 'Surge Protective Device (SPD / TVSS) Integration Scope',
+          systemArea: 'Surge Protection & Power Quality',
+          type: 'SCOPE_GAP' as const,
+          keywords: ['surge protective', 'spd', 'tvss', 'transient voltage', 'surge suppressor', '26 43 13', '264313'],
+          explanation: 'Specification Section 26 43 13 mandates Type 1 or Type 2 surge protective devices at main service equipment and sub-panels. Verify if panel schedules designate dedicated disconnect breakers or integral surge suppression units.',
+        },
+        {
+          title: 'Motor Disconnect Switch & Mechanical Equipment Coordination',
+          systemArea: 'Motor Controls & Mechanical Interlocks',
+          type: 'CONFLICT' as const,
+          keywords: ['disconnect', 'fusible', 'non-fusible', 'safety switch', 'vfd', 'starter', 'chiller', 'ahu', 'rtu', 'motor', '26 29 23'],
+          explanation: 'Division 26 requires local fusible disconnect switches with auxiliary interlock contacts for mechanical motors, while drawings show non-fusible units or designate disconnects "by mechanical contractor".',
+        },
+        {
+          title: 'NEMA Enclosure Environmental Rating Coordination',
+          systemArea: 'Equipment Enclosures',
+          type: 'CONFLICT' as const,
+          keywords: ['nema 3r', 'nema 4x', 'nema 12', 'weatherproof', 'outdoor enclosure', 'stainless steel', 'damp location'],
+          explanation: 'Specification mandates NEMA 3R weatherproof or NEMA 4X stainless steel enclosures for exterior or washdown areas, while drawing details call out standard NEMA 1 indoor cabinets.',
+        },
+        {
+          title: 'Lighting Control System & Daylight Harvesting Sensor Scope',
           systemArea: 'Lighting Controls',
-          keywords: ['daylight', 'photocell', 'sensor', 'occupancy', 'dimming', 'timeclock'],
-          explanation: 'Energy code and lighting control specifications mandate daylight harvesting or automatic sensors. Verify if corresponding sensor symbols and relay panels appear on the electrical floor plans.',
+          type: 'SCOPE_GAP' as const,
+          keywords: ['daylight', 'photocell', 'occupancy sensor', 'lighting control', 'dimming', '0-10v', 'relay panel', 'title 24', 'ashrae', '26 09 23'],
+          explanation: 'Energy conservation codes and Section 26 09 23 require automated daylight harvesting sensors and low-voltage relay panels. Verify if floor plans reflect required power packs, sensors, and low-voltage control cabling.',
         },
         {
-          title: 'Mechanical Equipment Disconnect & Shunt-Trip Coordination',
-          systemArea: 'HVAC & Mechanical Coordination',
-          keywords: ['disconnect', 'shunt', 'ahu', 'rtu', 'damper', 'motor', 'chiller', 'pump'],
-          explanation: 'Division 26 specifications outline disconnect type and fire alarm interface for mechanical equipment. Confirm that electrical drawings reflect correct starter, disconnect, and breaker ratings.',
+          title: 'Grounding Electrode System & Ufer Ground Coordination',
+          systemArea: 'Grounding & Bonding',
+          type: 'MISSING_REFERENCE' as const,
+          keywords: ['ufer ground', 'concrete-encased', 'ground ring', 'counterpoise', 'ground rod', '25 ohms', '5 ohms', 'grounding electrode', '26 05 26', '260526'],
+          explanation: 'Specification Section 26 05 26 specifies concrete-encased Ufer electrode and supplementary ground ring with maximum resistance testing. Verify whether drawing electrical single-line riser depicts corresponding ground riser details.',
+        },
+        {
+          title: 'Switchboard & Panelboard AIC Withstand Rating Coordination',
+          systemArea: 'Overcurrent Protection',
+          type: 'CONFLICT' as const,
+          keywords: ['kaic', 'aic rating', 'short circuit rating', 'sccr', 'fault current', '65k', '42k', '100k', 'interrupting rating'],
+          explanation: 'Specification mandates minimum 65kAIC or 42kAIC series-rated or fully rated switchgear, while drawing panel schedules show lower 10kAIC or 22kAIC rated equipment, risking code rejection by the AHJ.',
+        },
+        {
+          title: 'Transformer K-Factor & Temperature Rise Rating Coordination',
+          systemArea: 'Dry-Type Transformers',
+          type: 'CONFLICT' as const,
+          keywords: ['transformer', 'k-factor', 'k-13', 'k-4', 'k-20', 'temperature rise', '115 deg', '80 deg', 'dry-type', '26 22 00', '262200'],
+          explanation: 'Specification Section 26 22 00 calls for K-13 non-linear harmonic mitigation transformers with 115°C or 80°C temperature rise, whereas drawing equipment schedule lists standard general-purpose 150°C units.',
+        },
+        {
+          title: 'Fire Alarm Duct Smoke Detector HVAC Shutdown Interlocks',
+          systemArea: 'Life Safety & Interlocks',
+          type: 'SCOPE_GAP' as const,
+          keywords: ['duct smoke detector', 'fire alarm shutdown', 'hvac shutdown', 'fan shutdown', 'fire damper', 'control relay', 'air handler'],
+          explanation: 'Division 26 specifications require 120V control power and shutdown interlocks for mechanical duct smoke detectors. Ensure wiring and auxiliary relay modules are included in the electrical base bid.',
+        },
+        {
+          title: 'Elevator Shunt Trip Breaker & Machine Room Power Scope',
+          systemArea: 'Conveying Systems & Power',
+          type: 'SCOPE_GAP' as const,
+          keywords: ['elevator', 'shunt trip', 'pit light', 'machine room', 'elevator recall', 'battery lowering', 'fire service'],
+          explanation: 'Specifications require shunt-trip main breaker with 120V control power and battery control bus for elevator pit sprinkler coordination, but electrical distribution schedule depicts standard thermal-magnetic breaker.',
+        },
+        {
+          title: 'Conduit Raceway Material Specification (EMT / RMC / PVC)',
+          systemArea: 'Raceways & Conduits',
+          type: 'CONFLICT' as const,
+          keywords: ['rigid metal conduit', 'rmc', 'intermediate metal', 'imc', 'pvc coated', 'schedule 40', 'schedule 80', 'emt', 'raceway', '26 05 33'],
+          explanation: 'Specification mandates Rigid Metal Conduit (RMC) or PVC-coated rigid for underground, exterior, and exposed slab transitions, while drawing notes allow Schedule 40 PVC or EMT throughout.',
+        },
+        {
+          title: 'Isolated Ground (IG) & Hospital Grade Device Coordination',
+          systemArea: 'Wiring Devices',
+          type: 'CONFLICT' as const,
+          keywords: ['isolated ground', 'ig receptacle', 'hospital grade', 'dedicated neutral', 'orange triangle', '26 27 26', '262726'],
+          explanation: 'Specification mandates isolated ground receptacles with dedicated insulated green grounding conductors for sensitive IT/medical circuits, while drawing floor plans illustrate standard convenience duplex outlets.',
+        },
+        {
+          title: 'Power Monitoring, Sub-Metering & CT Cabinet Scope',
+          systemArea: 'Metering & Energy Management',
+          type: 'SCOPE_GAP' as const,
+          keywords: ['metering', 'power monitor', 'digital meter', 'modbus', 'bacnet', 'ethernet meter', 'ct cabinet', 'current transformer', '26 09 13', '260913'],
+          explanation: 'Section 26 09 13 requires digital multi-function power meters and tenant CT cabinets with building management network integration, but drawing one-line diagram lacks metering CT/PT wiring notation.',
+        },
+        {
+          title: 'NETA Acceptance Testing & Infrared Thermographic Survey Scope',
+          systemArea: 'Testing & Commissioning',
+          type: 'SCOPE_GAP' as const,
+          keywords: ['neta', 'acceptance testing', 'infrared', 'thermographic', 'megger', 'commissioning', 'torque verification', 'testing agency'],
+          explanation: 'Specification mandates independent third-party NETA certified testing and full-load infrared thermographic survey prior to substantial completion. Estimator must carry subcontractor testing allowance.',
         },
       ];
 
@@ -706,7 +802,10 @@ ${drawingSummaries}
     project.processingSteps[4].details = error.message;
     res.status(500).json({ error: error.message || 'Error executing cross-check' });
   }
-});
+};
+
+app.post('/api/projects/:id/analyze', handleAnalyzeProject);
+app.post('/api/projects/:id/cross-check', handleAnalyzeProject);
 
 // 8. Human-In-The-Loop: Update finding decision & estimator notes
 app.patch('/api/projects/:id/findings/:findingId', (req, res) => {

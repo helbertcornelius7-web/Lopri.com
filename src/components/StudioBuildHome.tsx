@@ -22,7 +22,8 @@ import {
   ExternalLink,
   Upload,
   Trash2,
-  Folder
+  Folder,
+  Play
 } from 'lucide-react';
 
 interface StudioBuildHomeProps {
@@ -346,11 +347,20 @@ export const StudioBuildHome: React.FC<StudioBuildHomeProps> = React.memo(({
                   ? 'All uploaded drawing sheets and specification sections have been cross-checked. No scope conflicts, missing disconnect switches, or metallurgy gaps were found.'
                   : `${project.documents.length} document(s) uploaded. Click "Run Scope Check" in the top bar to cross-reference drawing sheets against Division 26 specifications.`}
               </p>
-              <div className="pt-2">
+              <div className="pt-2 flex flex-wrap items-center justify-center gap-2.5">
+                <button
+                  type="button"
+                  onClick={onRunScopeCheck}
+                  disabled={isAnalyzing}
+                  className="inline-flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-bold bg-amber-500 hover:bg-amber-600 text-slate-950 transition-colors shadow-2xs disabled:opacity-50"
+                >
+                  <Play className="w-3.5 h-3.5 fill-slate-950" />
+                  <span>{isAnalyzing ? 'Running Scope Check...' : 'Run Scope Check'}</span>
+                </button>
                 <button
                   type="button"
                   onClick={onOpenPlayground}
-                  className="inline-flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-bold bg-amber-500 hover:bg-amber-600 text-slate-950 transition-colors shadow-2xs"
+                  className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl text-xs font-bold bg-slate-100 hover:bg-slate-200 text-slate-700 transition-colors border border-slate-200"
                 >
                   <span>Open Review Canvas</span>
                   <ArrowRight className="w-3.5 h-3.5" />

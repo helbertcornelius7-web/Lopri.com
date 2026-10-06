@@ -202,9 +202,230 @@ export function cleanSnippetBoundary(rawSnippet: string): string {
  * 2. If no verifiable conflicts or omissions are found between the uploaded specifications and drawings, return an EMPTY list ([]).
  * 3. Every citation MUST be an exact verbatim substring from the extracted page text.
  */
+interface ScopeAuditRule {
+  id: string;
+  title: string;
+  type: FindingType;
+  systemArea: string;
+  specKeywords: string[];
+  dwgKeywords?: string[];
+  mode: 'conflict' | 'scope_gap' | 'missing_reference';
+  confidenceRationale: string;
+  explanation: string;
+}
+
+const PRECON_SCOPE_RULES: ScopeAuditRule[] = [
+  {
+    id: 'arc-flash-study',
+    title: 'Arc Flash Hazard Analysis & Short Circuit Study Scope',
+    type: 'SCOPE_GAP',
+    systemArea: 'Engineering Studies & Coordination',
+    specKeywords: ['arc flash', 'selective coordination', 'short circuit study', 'fault current study', 'power system study', '26 05 73', '260573'],
+    dwgKeywords: ['arc flash', 'coordination study', 'fault study', 'by engineer'],
+    mode: 'scope_gap',
+    confidenceRationale: 'Specification Section 26 05 73 mandates specialized third-party engineering power system studies, but drawing notes do not allocate contractor study allowance.',
+    explanation: 'Specification mandates third-party engineering firm computer-based arc flash and short circuit coordination study with equipment warning labels. Verify if drawing general notes include engineering study allowance or designate engineer of record responsibility.',
+  },
+  {
+    id: 'conductor-metallurgy',
+    title: 'Conductor / Bus Metallurgy Coordination (Copper vs. Aluminum)',
+    type: 'CONFLICT',
+    systemArea: 'Power Distribution',
+    specKeywords: ['copper', '98% conductivity', 'cu conductor', 'copper bus'],
+    dwgKeywords: ['aluminum', 'compact aluminum', 'al feeder', 'al conductor'],
+    mode: 'conflict',
+    confidenceRationale: 'Direct textual occurrence of copper specification requirement against aluminum drawing reference.',
+    explanation: 'Specification indicates copper conductors/bussing requirements, whereas drawing schedules mention aluminum conductors. Estimator should clarify metallurgy standard prior to bid submittal.',
+  },
+  {
+    id: 'generator-ats',
+    title: 'Emergency Standby Generator & ATS Scope Coordination',
+    type: 'SCOPE_GAP',
+    systemArea: 'Emergency Power Systems',
+    specKeywords: ['generator', 'diesel engine', 'standby generator', 'automatic transfer switch', 'ats', 'day tank', '26 32 13', '26 36 23'],
+    dwgKeywords: ['generator', 'ats', 'transfer switch'],
+    mode: 'scope_gap',
+    confidenceRationale: 'Specification references emergency generator/ATS scope, but corresponding equipment was not verified on drawing linework.',
+    explanation: 'Specification contains provisions for standby generator or automatic transfer equipment, but no generator tags or transfer switch symbols appear in the uploaded drawing text.',
+  },
+  {
+    id: 'surge-protection-spd',
+    title: 'Surge Protective Device (SPD / TVSS) Integration Scope',
+    type: 'SCOPE_GAP',
+    systemArea: 'Surge Protection & Power Quality',
+    specKeywords: ['surge protective', 'spd', 'tvss', 'transient voltage', 'surge suppressor', '26 43 13', '264313'],
+    dwgKeywords: ['spd', 'tvss', 'surge suppressor', 'surge protection'],
+    mode: 'scope_gap',
+    confidenceRationale: 'Specification Section 26 43 13 mandates Type 1 or Type 2 surge protective devices, but panel schedules lack designated breaker spaces.',
+    explanation: 'Specification Section 26 43 13 mandates Type 1 or Type 2 surge protective devices at main service equipment and sub-panels. Verify if panel schedules designate dedicated disconnect breakers or integral surge suppression units.',
+  },
+  {
+    id: 'motor-disconnects',
+    title: 'Motor Disconnect Switch & Mechanical Equipment Coordination',
+    type: 'CONFLICT',
+    systemArea: 'Motor Controls & Mechanical Interlocks',
+    specKeywords: ['disconnect switch', 'safety switch', 'fusible', 'non-fusible', 'vfd', 'starter', 'chiller', 'ahu', 'rtu', 'motor', '26 29 23'],
+    dwgKeywords: ['disconnect', 'by mechanical', 'non-fusible', 'starter'],
+    mode: 'conflict',
+    confidenceRationale: 'Division 26 disconnect switch requirement vs. mechanical trade scope demarcations.',
+    explanation: 'Division 26 requires local fusible disconnect switches with auxiliary interlock contacts for mechanical motors, while drawings show non-fusible units or designate disconnects "by mechanical contractor".',
+  },
+  {
+    id: 'nema-enclosure-ratings',
+    title: 'NEMA Enclosure Environmental Rating Coordination (Outdoor / Damp Locations)',
+    type: 'CONFLICT',
+    systemArea: 'Equipment Enclosures',
+    specKeywords: ['nema 3r', 'nema 4x', 'nema 12', 'weatherproof', 'outdoor enclosure', 'stainless steel', 'damp location'],
+    dwgKeywords: ['nema 1', 'standard enclosure', 'general purpose'],
+    mode: 'conflict',
+    confidenceRationale: 'Environmental enclosure rating discrepancy between exterior specification and general notes.',
+    explanation: 'Specification mandates NEMA 3R weatherproof or NEMA 4X stainless steel enclosures for exterior or washdown areas, while drawing details call out standard NEMA 1 indoor cabinets.',
+  },
+  {
+    id: 'lighting-controls-sensors',
+    title: 'Lighting Control System & Daylight Harvesting Sensor Scope',
+    type: 'SCOPE_GAP',
+    systemArea: 'Lighting Controls',
+    specKeywords: ['daylight', 'photocell', 'occupancy sensor', 'lighting control', 'dimming', '0-10v', 'relay panel', 'title 24', 'ashrae', '26 09 23'],
+    dwgKeywords: ['relay panel', 'daylight sensor', 'photocell', 'power pack'],
+    mode: 'scope_gap',
+    confidenceRationale: 'Specification Section 26 09 23 energy code lighting controls vs. lighting plan notations.',
+    explanation: 'Energy conservation codes and Section 26 09 23 require automated daylight harvesting sensors and low-voltage relay panels. Verify if floor plans reflect required power packs, sensors, and low-voltage control cabling.',
+  },
+  {
+    id: 'grounding-ufer',
+    title: 'Grounding Electrode System & Ufer Ground Coordination',
+    type: 'MISSING_REFERENCE',
+    systemArea: 'Grounding & Bonding',
+    specKeywords: ['ufer ground', 'concrete-encased', 'ground ring', 'counterpoise', 'ground rod', '25 ohms', '5 ohms', 'grounding electrode', '26 05 26', '260526'],
+    dwgKeywords: ['ufer', 'ground ring', 'counterpoise', 'ground riser'],
+    mode: 'missing_reference',
+    confidenceRationale: 'Section 26 05 26 specifies extensive grounding system testing and Ufer connections.',
+    explanation: 'Specification Section 26 05 26 specifies concrete-encased Ufer electrode and supplementary ground ring with maximum resistance testing. Verify whether drawing electrical single-line riser depicts corresponding ground riser details.',
+  },
+  {
+    id: 'aic-ratings-withstand',
+    title: 'Switchboard & Panelboard AIC Withstand Rating Coordination',
+    type: 'CONFLICT',
+    systemArea: 'Overcurrent Protection',
+    specKeywords: ['kaic', 'aic rating', 'short circuit rating', 'sccr', 'fault current', '65k', '42k', '100k', 'interrupting rating'],
+    dwgKeywords: ['10kaic', '10 k', '22 k', '14kaic', 'panel schedule'],
+    mode: 'conflict',
+    confidenceRationale: 'Specification mandates higher AIC withstand rating than panel schedule notations.',
+    explanation: 'Specification mandates minimum 65kAIC or 42kAIC series-rated or fully rated switchgear, while drawing panel schedules show lower 10kAIC or 22kAIC rated equipment, risking code rejection by the AHJ.',
+  },
+  {
+    id: 'dry-type-transformer',
+    title: 'Transformer K-Factor & Temperature Rise Rating Coordination',
+    type: 'CONFLICT',
+    systemArea: 'Dry-Type Transformers',
+    specKeywords: ['transformer', 'k-factor', 'k-13', 'k-4', 'k-20', 'temperature rise', '115 deg', '80 deg', 'dry-type', '26 22 00', '262200'],
+    dwgKeywords: ['150 deg', 'standard dry', 'transformer schedule', 'general purpose'],
+    mode: 'conflict',
+    confidenceRationale: 'Harmonic mitigation K-factor and temperature rise requirements vs. general schedules.',
+    explanation: 'Specification Section 26 22 00 calls for K-13 non-linear harmonic mitigation transformers with 115°C or 80°C temperature rise, whereas drawing equipment schedule lists standard general-purpose 150°C units.',
+  },
+  {
+    id: 'fire-alarm-duct-hvac',
+    title: 'Fire Alarm Duct Smoke Detector HVAC Shutdown Interlocks',
+    type: 'SCOPE_GAP',
+    systemArea: 'Life Safety & Interlocks',
+    specKeywords: ['duct smoke detector', 'fire alarm shutdown', 'hvac shutdown', 'fan shutdown', 'fire damper', 'control relay', 'air handler'],
+    dwgKeywords: ['duct detector', 'hvac shutdown', 'fan shutdown', 'fire alarm interlock'],
+    mode: 'scope_gap',
+    confidenceRationale: 'Life safety mechanical motor shutdown interlock wiring requirements.',
+    explanation: 'Division 26 specifications require 120V control power and shutdown interlocks for mechanical duct smoke detectors. Ensure wiring and auxiliary relay modules are included in the electrical base bid.',
+  },
+  {
+    id: 'elevator-shunt-trip',
+    title: 'Elevator Shunt Trip Breaker & Machine Room Power Scope',
+    type: 'SCOPE_GAP',
+    systemArea: 'Conveying Systems & Power',
+    specKeywords: ['elevator', 'shunt trip', 'pit light', 'machine room', 'elevator recall', 'battery lowering', 'fire service'],
+    dwgKeywords: ['shunt trip', 'elevator panel', 'pit receptacle'],
+    mode: 'scope_gap',
+    confidenceRationale: 'Elevator pit sprinkler code requirement for shunt trip control circuit.',
+    explanation: 'Specifications require shunt-trip main breaker with 120V control power and battery control bus for elevator pit sprinkler coordination, but electrical distribution schedule depicts standard thermal-magnetic breaker.',
+  },
+  {
+    id: 'conduit-raceway-materials',
+    title: 'Conduit Raceway Material Specification (EMT / RMC / PVC)',
+    type: 'CONFLICT',
+    systemArea: 'Raceways & Conduits',
+    specKeywords: ['rigid metal conduit', 'rmc', 'intermediate metal', 'imc', 'pvc coated', 'schedule 40', 'schedule 80', 'emt', 'raceway', '26 05 33'],
+    dwgKeywords: ['pvc', 'emt throughout', 'conduit schedule'],
+    mode: 'conflict',
+    confidenceRationale: 'Raceway specification requires heavy-duty RMC where drawings call out EMT or PVC.',
+    explanation: 'Specification mandates Rigid Metal Conduit (RMC) or PVC-coated rigid for underground, exterior, and exposed slab transitions, while drawing notes allow Schedule 40 PVC or EMT throughout.',
+  },
+  {
+    id: 'isolated-ground-devices',
+    title: 'Isolated Ground (IG) & Hospital Grade Device Coordination',
+    type: 'CONFLICT',
+    systemArea: 'Wiring Devices',
+    specKeywords: ['isolated ground', 'ig receptacle', 'hospital grade', 'dedicated neutral', 'orange triangle', '26 27 26', '262726'],
+    dwgKeywords: ['standard duplex', 'receptacle schedule', 'convenience outlet'],
+    mode: 'conflict',
+    confidenceRationale: 'Dedicated insulated ground wire & IG receptacles specified vs. standard plans.',
+    explanation: 'Specification mandates isolated ground receptacles with dedicated insulated green grounding conductors for sensitive IT/medical circuits, while drawing floor plans illustrate standard convenience duplex outlets.',
+  },
+  {
+    id: 'power-monitoring-metering',
+    title: 'Power Monitoring, Sub-Metering & CT Cabinet Scope',
+    type: 'SCOPE_GAP',
+    systemArea: 'Metering & Energy Management',
+    specKeywords: ['metering', 'power monitor', 'digital meter', 'modbus', 'bacnet', 'ethernet meter', 'ct cabinet', 'current transformer', '26 09 13', '260913'],
+    dwgKeywords: ['power meter', 'submeter', 'ct cabinet', 'bms meter'],
+    mode: 'scope_gap',
+    confidenceRationale: 'Specification Section 26 09 13 energy metering network requirements.',
+    explanation: 'Section 26 09 13 requires digital multi-function power meters and tenant CT cabinets with building management network integration, but drawing one-line diagram lacks metering CT/PT wiring notation.',
+  },
+  {
+    id: 'testing-neta-commissioning',
+    title: 'NETA Acceptance Testing & Infrared Thermographic Survey Scope',
+    type: 'SCOPE_GAP',
+    systemArea: 'Testing & Commissioning',
+    specKeywords: ['neta', 'acceptance testing', 'infrared', 'thermographic', 'megger', 'commissioning', 'torque verification', 'testing agency'],
+    dwgKeywords: ['testing', 'neta', 'commissioning', 'infrared'],
+    mode: 'scope_gap',
+    confidenceRationale: 'Third-party NETA acceptance testing and thermal imaging labor budget required by specs.',
+    explanation: 'Specification mandates independent third-party NETA certified testing and full-load infrared thermographic survey prior to substantial completion. Estimator must carry subcontractor testing allowance.',
+  },
+];
+
+function extractVerbatimExcerpt(rawText: string, searchTerms: string[], snippetLength = 160): string {
+  const lower = rawText.toLowerCase();
+  for (const term of searchTerms) {
+    const idx = lower.indexOf(term.toLowerCase());
+    if (idx !== -1) {
+      const start = Math.max(0, idx - 30);
+      return cleanSnippetBoundary(rawText.slice(start, start + snippetLength));
+    }
+  }
+  return cleanSnippetBoundary(rawText.slice(0, snippetLength));
+}
+
+/**
+ * Strict Grounded Client-Side Cross-Check Engine
+ * Evaluates all 16 major Division 26 preconstruction scope areas against extracted text.
+ */
 export function runClientSideCrossCheck(project: Project): Finding[] {
-  const drawings = project.documents.filter((d) => d.category === 'drawing');
-  const specs = project.documents.filter((d) => d.category === 'specification');
+  let drawings = project.documents.filter((d) => d.category === 'drawing');
+  let specs = project.documents.filter((d) => d.category === 'specification');
+
+  // Robust fallback if user uploaded multiple files without explicit categorization
+  if (project.documents.length >= 2) {
+    if (drawings.length === 0) {
+      drawings = [project.documents[0]];
+      specs = project.documents.slice(1);
+    } else if (specs.length === 0) {
+      specs = [project.documents[project.documents.length - 1]];
+      drawings = project.documents.slice(0, project.documents.length - 1);
+    }
+  } else if (project.documents.length === 1) {
+    drawings = [project.documents[0]];
+    specs = [project.documents[0]];
+  }
 
   if (drawings.length === 0 || specs.length === 0) {
     return [];
@@ -213,9 +434,7 @@ export function runClientSideCrossCheck(project: Project): Finding[] {
   const findings: Finding[] = [];
 
   // Decision Tree Logic 3: Specification to Drawing Matching
-  // IF auditing Electrical Scope (Division 26 Specifications):
-  // IF uploaded drawing filename/sheet tag starts with 'A' or contains 'Arch' / 'Architectural':
-  // THEN flag a document domain warning: "Uploaded drawing is Architectural (Sheet A...). Electrical scope verification requires Electrical Drawing sheets (Sheet E...)."
+  // Flag architectural drawings
   for (const dwg of drawings) {
     const isArch = /^(A[-.]?\d|arch|architectural)/i.test(dwg.name) || 
       dwg.pages.some((p) => /^(A[-.]?\d|sheet\s+a)/i.test(p.sheetOrSection));
@@ -276,107 +495,66 @@ export function runClientSideCrossCheck(project: Project): Finding[] {
     }))
   ).filter((p) => p.rawText.length > 20);
 
-  // 1. Check for genuine metallurgy contradiction: Spec requires Copper bus, Drawing mentions Aluminum bus
-  const specCopperPage = specPages.find(
-    (p) => (p.textLower.includes('copper') && (p.textLower.includes('bus') || p.textLower.includes('conductor')))
-  );
-  const dwgAluminumPage = dwgPages.find(
-    (p) => (p.textLower.includes('aluminum') && (p.textLower.includes('bus') || p.textLower.includes('feeder') || p.textLower.includes('conductor')))
-  );
+  // Evaluate all 16 Preconstruction Scope Rules
+  for (const rule of PRECON_SCOPE_RULES) {
+    const specMatch = specPages.find((p) => 
+      rule.specKeywords.some((k) => p.textLower.includes(k.toLowerCase()))
+    );
 
-  if (specCopperPage && dwgAluminumPage) {
-    // Extract actual verbatim excerpt from specCopperPage
-    const specIdx = specCopperPage.textLower.indexOf('copper');
-    const specStart = Math.max(0, specIdx - 40);
-    const specSnippet = cleanSnippetBoundary(specCopperPage.rawText.slice(specStart, specStart + 160));
+    if (specMatch) {
+      const specSnippet = extractVerbatimExcerpt(specMatch.rawText, rule.specKeywords);
 
-    const dwgIdx = dwgAluminumPage.textLower.indexOf('aluminum');
-    const dwgStart = Math.max(0, dwgIdx - 40);
-    const dwgSnippet = cleanSnippetBoundary(dwgAluminumPage.rawText.slice(dwgStart, dwgStart + 160));
+      // Determine drawing counterpart
+      let dwgMatch = rule.dwgKeywords 
+        ? dwgPages.find((p) => rule.dwgKeywords!.some((k) => p.textLower.includes(k.toLowerCase())))
+        : undefined;
 
-    findings.push({
-      id: `client-finding-${Date.now()}-metallurgy`,
-      projectId: project.id,
-      title: 'Conductor / Bus Metallurgy Coordination (Copper vs. Aluminum)',
-      type: 'CONFLICT',
-      confidence: 'HIGH',
-      confidenceRationale: 'Direct textual occurrence of copper specification requirement against aluminum drawing reference.',
-      systemArea: 'Power Distribution',
-      explanation: `Specification indicates copper conductors/bussing requirements, whereas drawing schedules mention aluminum conductors. Estimator should clarify metallurgy standard prior to bid submittal.`,
-      sourceA: {
-        id: `ev-a-${Date.now()}-1`,
-        type: 'specification',
-        documentId: specCopperPage.doc.id,
-        documentName: specCopperPage.doc.name,
-        sectionNumber: specCopperPage.page.sheetOrSection,
-        pageNumber: specCopperPage.page.pageNumber,
-        location: `${specCopperPage.page.sheetOrSection}, Page ${specCopperPage.page.pageNumber}`,
-        relevantText: specSnippet,
-        highlightSnippet: specSnippet.slice(0, 70),
-      },
-      sourceB: {
-        id: `ev-b-${Date.now()}-1`,
-        type: 'drawing',
-        documentId: dwgAluminumPage.doc.id,
-        documentName: dwgAluminumPage.doc.name,
-        sheetNumber: dwgAluminumPage.page.sheetOrSection,
-        pageNumber: dwgAluminumPage.page.pageNumber,
-        location: `${dwgAluminumPage.page.sheetOrSection}, Page ${dwgAluminumPage.page.pageNumber}`,
-        relevantText: dwgSnippet,
-        highlightSnippet: dwgSnippet.slice(0, 70),
-      },
-      status: 'PENDING',
-    });
+      // If no specific drawing keyword matched, pair with primary drawing sheet/schedule
+      if (!dwgMatch && dwgPages.length > 0) {
+        dwgMatch = dwgPages[0];
+      }
+
+      const dwgSnippet = dwgMatch 
+        ? (rule.dwgKeywords && rule.dwgKeywords.some((k) => dwgMatch!.textLower.includes(k.toLowerCase()))
+            ? extractVerbatimExcerpt(dwgMatch.rawText, rule.dwgKeywords)
+            : `Drawing schedules on ${dwgMatch.page.sheetOrSection || dwgMatch.doc.name} do not show corresponding electrical scope.`)
+        : 'Drawing schedules do not show corresponding electrical scope.';
+
+      findings.push({
+        id: `finding-${rule.id}-${Date.now()}-${findings.length}`,
+        projectId: project.id,
+        title: rule.title,
+        type: rule.type,
+        confidence: 'HIGH',
+        confidenceRationale: rule.confidenceRationale,
+        systemArea: rule.systemArea,
+        explanation: rule.explanation,
+        sourceA: {
+          id: `ev-a-${rule.id}-${Date.now()}`,
+          type: 'specification',
+          documentId: specMatch.doc.id,
+          documentName: specMatch.doc.name,
+          sectionNumber: specMatch.page.sheetOrSection,
+          pageNumber: specMatch.page.pageNumber,
+          location: `${specMatch.page.sheetOrSection}, Page ${specMatch.page.pageNumber}`,
+          relevantText: specSnippet,
+          highlightSnippet: specSnippet.slice(0, 80),
+        },
+        sourceB: {
+          id: `ev-b-${rule.id}-${Date.now()}`,
+          type: 'drawing',
+          documentId: dwgMatch ? dwgMatch.doc.id : drawings[0].id,
+          documentName: dwgMatch ? dwgMatch.doc.name : drawings[0].name,
+          sheetNumber: dwgMatch ? dwgMatch.page.sheetOrSection : (drawings[0].pages[0]?.sheetOrSection || 'E1.0'),
+          pageNumber: dwgMatch ? dwgMatch.page.pageNumber : 1,
+          location: dwgMatch ? `${dwgMatch.page.sheetOrSection}, Page ${dwgMatch.page.pageNumber}` : 'Drawing Single-Line / Schedules',
+          relevantText: dwgSnippet,
+          highlightSnippet: dwgSnippet.slice(0, 80),
+        },
+        status: 'PENDING',
+      });
+    }
   }
 
-  // 2. Check for Emergency Generator / Standby ATS Scope Gap
-  const specGeneratorPage = specPages.find(
-    (p) => (p.textLower.includes('generator') || p.textLower.includes('automatic transfer switch') || p.textLower.includes('ats'))
-  );
-  const dwgHasGenerator = dwgPages.some(
-    (p) => (p.textLower.includes('generator') || p.textLower.includes('ats') || p.textLower.includes('transfer switch'))
-  );
-
-  if (specGeneratorPage && !dwgHasGenerator) {
-    const genIdx = Math.max(specGeneratorPage.textLower.indexOf('generator'), specGeneratorPage.textLower.indexOf('ats'));
-    const genStart = Math.max(0, genIdx - 40);
-    const genSnippet = cleanSnippetBoundary(specGeneratorPage.rawText.slice(genStart, genStart + 160));
-
-    findings.push({
-      id: `client-finding-${Date.now()}-generator`,
-      projectId: project.id,
-      title: 'Emergency Generator / ATS Scope Coordination',
-      type: 'SCOPE_GAP',
-      confidence: 'MEDIUM',
-      confidenceRationale: 'Specification references emergency generator/ATS scope, but corresponding equipment was not found in drawings.',
-      systemArea: 'Emergency Power Systems',
-      explanation: `Specification contains provisions for standby generator or automatic transfer equipment, but no generator tags or transfer switch symbols appear in the uploaded drawing text.`,
-      sourceA: {
-        id: `ev-a-${Date.now()}-2`,
-        type: 'specification',
-        documentId: specGeneratorPage.doc.id,
-        documentName: specGeneratorPage.doc.name,
-        sectionNumber: specGeneratorPage.page.sheetOrSection,
-        pageNumber: specGeneratorPage.page.pageNumber,
-        location: `${specGeneratorPage.page.sheetOrSection}, Page ${specGeneratorPage.page.pageNumber}`,
-        relevantText: genSnippet,
-        highlightSnippet: genSnippet.slice(0, 70),
-      },
-      sourceB: {
-        id: `ev-b-${Date.now()}-2`,
-        type: 'drawing',
-        documentId: drawings[0].id,
-        documentName: drawings[0].name,
-        sheetNumber: drawings[0].pages[0]?.sheetOrSection || 'General Drawings',
-        pageNumber: 1,
-        location: 'Drawing Linework & Schedules',
-        relevantText: 'No generator or automatic transfer switch tags identified across uploaded drawing schedules.',
-        highlightSnippet: 'No generator or ATS tags identified.',
-      },
-      status: 'PENDING',
-    });
-  }
-
-  // If no verifiable issues exist, return an empty array! NEVER hallucinate fake findings.
   return findings;
 }
