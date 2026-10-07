@@ -5,9 +5,9 @@ import multer from 'multer';
 import { PDFParse } from 'pdf-parse';
 import { createServer as createViteServer } from 'vite';
 import { GoogleGenAI, Type } from '@google/genai';
-import { Project, ProjectDocument, Finding, DocumentPage } from './src/types';
-import { sanitizePdfText } from './src/utils/sanitizePdfText';
-import { SAMPLE_PROJECT } from './src/demoData';
+import type { Project, ProjectDocument, Finding, DocumentPage } from './src/types';
+import { sanitizePdfText } from './src/utils/sanitizePdfText.js';
+import { SAMPLE_PROJECT } from './src/demoData.js';
 
 const app = express();
 const PORT = 3000;
