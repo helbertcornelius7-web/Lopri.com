@@ -315,6 +315,7 @@ const handleDocumentUpload = async (req: express.Request, res: express.Response)
       const pages: DocumentPage[] = [];
 
       try {
+        const { PDFParse } = await import('pdf-parse');
         const parser = new PDFParse({ data: file.buffer });
         const parsed: any = await parser.getText();
         extractedText = parsed.text || '';
