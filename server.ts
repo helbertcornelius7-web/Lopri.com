@@ -8,6 +8,10 @@ import { GoogleGenAI, Type } from '@google/genai';
 import type { Project, ProjectDocument, Finding, DocumentPage } from './src/types';
 import { sanitizePdfText } from './src/utils/sanitizePdfText.js';
 import { SAMPLE_PROJECT } from './src/demoData.js';
+const g: any = globalThis;
+if (typeof g.DOMMatrix === 'undefined') g.DOMMatrix = class DOMMatrix {};
+if (typeof g.ImageData === 'undefined') g.ImageData = class ImageData {};
+if (typeof g.Path2D === 'undefined') g.Path2D = class Path2D {};
 
 const app = express();
 const PORT = 3000;
