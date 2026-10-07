@@ -2,7 +2,6 @@ import express from 'express';
 import path from 'path';
 import zlib from 'zlib';
 import multer from 'multer';
-import { PDFParse } from 'pdf-parse';
 import { createServer as createViteServer } from 'vite';
 import { GoogleGenAI, Type } from '@google/genai';
 import type { Project, ProjectDocument, Finding, DocumentPage } from './src/types';
