@@ -314,11 +314,12 @@ const handleDocumentUpload = async (req: express.Request, res: express.Response)
       const pages: DocumentPage[] = [];
 
       try {
-        const { PDFParse } = await import('pdf-parse');
-        const parser = new PDFParse({ data: file.buffer });
-        const parsed: any = await parser.getText();
-        extractedText = parsed.text || '';
-        pageCount = parsed.total || (parsed.pages ? parsed.pages.length : 1);
+  const pdfParseModule = await import('pdf-parse');
+  const pdfParse = pdfParseModule.default || pdfParseModule;
+  const parsed: any = await pdfParse(file.buffer);
+  extractedText = parsed.text || '';
+  pageCount = parsed.numpages || (parsed.pages ? parsed.pages.length : 1);
+
 
         if (parsed.pages && Array.isArray(parsed.pages) && parsed.pages.length > 0) {
           parsed.pages.forEach((p: any, idx: number) => {
