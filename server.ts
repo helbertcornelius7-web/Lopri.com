@@ -159,6 +159,8 @@ app.post('/api/projects/load-sample', (req, res) => {
   res.json(cloned);
 });
 
+const MIN_USABLE_CHARS = 40;
+
 // Helper to extract text from raw PDF stream when standard PDFParse encounters unusual compression or CAD vector objects
 function extractFallbackPdfText(buffer: Buffer, originalName: string, isDrawing: boolean): {
   text: string;
@@ -222,12 +224,14 @@ function extractFallbackPdfText(buffer: Buffer, originalName: string, isDrawing:
   if (extractedText.length > 50) {
     const chunkSize = Math.max(1, Math.ceil(extractedText.length / detectedCount));
     for (let pNum = 1; pNum <= detectedCount; pNum++) {
-      const chunk = extractedText.slice((pNum - 1) * chunkSize, pNum * chunkSize);
+      const chunk = extractedText.slice((pNum - 1) * chunkSize, pNum * chunkSize).trim();
+      const text = chunk;
       pages.push({
         pageNumber: pNum,
         sheetOrSection: isDrawing ? `Sheet ${pNum} - ${originalName.replace(/\.pdf$/i, '')}` : `Section ${pNum}`,
         title: `${isDrawing ? 'Drawing Sheet' : 'Spec Section'} (Page ${pNum})`,
-        text: chunk || (isDrawing ? 'CAD graphical distribution schematics and schedules.' : 'Specification requirements.'),
+        text,
+        extractionStatus: text.length >= MIN_USABLE_CHARS ? 'ok' : 'empty',
       });
     }
   } else {
@@ -236,9 +240,8 @@ function extractFallbackPdfText(buffer: Buffer, originalName: string, isDrawing:
         pageNumber: pNum,
         sheetOrSection: isDrawing ? `Sheet ${pNum} - ${originalName.replace(/\.pdf$/i, '')}` : `Section ${pNum}`,
         title: isDrawing ? `Drawing Sheet ${pNum} (${originalName})` : `Spec Section ${pNum} (${originalName})`,
-        text: isDrawing
-          ? `Electrical distribution schematics, single-line power diagram, and equipment feeder schedules for ${originalName} (Sheet ${pNum}). CAD vector elements.`
-          : `Division 26 Electrical Technical Specifications for ${originalName} (Part ${pNum}). Submittals, materials, quality assurance, and execution.`,
+        text: '',
+        extractionStatus: 'empty',
       });
     }
   }
@@ -314,8 +317,8 @@ const handleDocumentUpload = async (req: express.Request, res: express.Response)
       const pages: DocumentPage[] = [];
 
       try {
-  const pdfParseModule = await import('pdf-parse');
-  const pdfParse = pdfParseModule.default || pdfParseModule;
+        const pdfParseModule: any = await import('pdf-parse');
+        const pdfParse = pdfParseModule.default || pdfParseModule;
   const parsed: any = await pdfParse(file.buffer);
   extractedText = parsed.text || '';
   pageCount = parsed.numpages || (parsed.pages ? parsed.pages.length : 1);
@@ -324,11 +327,13 @@ const handleDocumentUpload = async (req: express.Request, res: express.Response)
         if (parsed.pages && Array.isArray(parsed.pages) && parsed.pages.length > 0) {
           parsed.pages.forEach((p: any, idx: number) => {
             const pageTxt = sanitizePdfText(p.text || '').trim();
+            const text = pageTxt;
             pages.push({
               pageNumber: p.num || idx + 1,
               sheetOrSection: isDrawing ? `Sheet ${originalName.replace(/\.pdf$/i, '')}` : `Section ${idx + 1}`,
               title: `${isDrawing ? 'Drawing Sheet' : 'Spec Section'} (Page ${p.num || idx + 1})`,
-              text: pageTxt || (isDrawing ? 'Drawing sheet contains graphical schematics and schedules.' : 'Specification text page.'),
+              text,
+              extractionStatus: text.length >= MIN_USABLE_CHARS ? 'ok' : 'empty',
             });
           });
         } else {
@@ -337,14 +342,24 @@ const handleDocumentUpload = async (req: express.Request, res: express.Response)
           if (rawPages.length > 1) {
             rawPages.forEach((txt, idx) => {
               const cleanTxt = sanitizePdfText(txt).trim();
-              if (cleanTxt.length > 0) {
-                pages.push({
-                  pageNumber: idx + 1,
-                  sheetOrSection: isDrawing ? `Sheet ${originalName.replace(/\.pdf$/i, '')}` : `Section ${idx + 1}`,
-                  title: `${isDrawing ? 'Drawing Sheet' : 'Spec Section'} (Page ${idx + 1})`,
-                  text: cleanTxt,
-                });
-              }
+              const text = cleanTxt;
+              pages.push({
+                pageNumber: idx + 1,
+                sheetOrSection: isDrawing ? `Sheet ${originalName.replace(/\.pdf$/i, '')}` : `Section ${idx + 1}`,
+                title: `${isDrawing ? 'Drawing Sheet' : 'Spec Section'} (Page ${idx + 1})`,
+                text,
+                extractionStatus: text.length >= MIN_USABLE_CHARS ? 'ok' : 'empty',
+              });
+            });
+          } else {
+            const cleanTxt = sanitizePdfText(extractedText).trim();
+            const text = cleanTxt;
+            pages.push({
+              pageNumber: 1,
+              sheetOrSection: isDrawing ? `Sheet ${originalName.replace(/\.pdf$/i, '')}` : `Section 1`,
+              title: `${isDrawing ? 'Drawing Sheet' : 'Spec Section'} (Page 1)`,
+              text,
+              extractionStatus: text.length >= MIN_USABLE_CHARS ? 'ok' : 'empty',
             });
           }
         }
@@ -366,9 +381,8 @@ const handleDocumentUpload = async (req: express.Request, res: express.Response)
             pageNumber: pNum,
             sheetOrSection: isDrawing ? `Sheet ${pNum} - ${originalName.replace(/\.pdf$/i, '')}` : `Section ${pNum}`,
             title: isDrawing ? `Drawing Sheet ${pNum} (${originalName})` : `Spec Section ${pNum} (${originalName})`,
-            text: isDrawing
-              ? `Electrical single-line diagram, distribution panelboards, and equipment feeder schedule for ${originalName} (Sheet ${pNum}). Graphical CAD vector layers.`
-              : `Division 26 Electrical Technical Specifications for ${originalName} (Part ${pNum}). Materials, installation standards, and commissioning requirements.`,
+            text: '',
+            extractionStatus: 'empty',
           });
         }
       }
@@ -409,6 +423,32 @@ const handleDocumentUpload = async (req: express.Request, res: express.Response)
 app.post('/api/projects/:id/upload', handleMulterUpload, handleDocumentUpload);
 app.post('/api/projects/:id/documents', handleMulterUpload, handleDocumentUpload);
 
+// ---------- B. Helpers (above handleAnalyzeProject) ----------
+const ALLOWED_TYPES = ['SCOPE_GAP', 'CONFLICT', 'MISSING_REFERENCE', 'DOCUMENT_CONFLICT'];
+
+// Sawazisha whitespace na quotes za mtindo ("") ili PDF text isikataliwe kwa tofauti ndogo.
+const norm = (s: string) =>
+  s
+    .replace(/\s+/g, ' ')
+    .replace(/[\u201C\u201D]/g, '"')
+    .replace(/[\u2018\u2019]/g, "'")
+    .toLowerCase()
+    .trim();
+
+function findPage(doc: ProjectDocument | undefined, pageNumber: unknown) {
+  if (!doc) return undefined;
+  const n = Number(pageNumber);
+  if (!Number.isInteger(n)) return undefined;
+  return doc.pages.find((p) => p.pageNumber === n);
+}
+
+// KWA NINI: LLM inaweza kukosea. includes() haikosei.
+function quoteExistsOnPage(quote: unknown, page?: DocumentPage): boolean {
+  if (!page || typeof quote !== 'string') return false;
+  const q = norm(quote);
+  return q.length >= 15 && norm(page.text).includes(q); // quote fupi mno si ushahidi
+}
+
 // 7. Run Cross-Check AI Analysis on Project (handles both /analyze and /cross-check)
 const handleAnalyzeProject = async (req: express.Request, res: express.Response) => {
   let project = projectsStore.get(req.params.id);
@@ -422,6 +462,11 @@ const handleAnalyzeProject = async (req: express.Request, res: express.Response)
 
   if (!project) {
     return res.status(404).json({ error: 'Project not found' });
+  }
+
+  const ai = getAi();
+  if (!ai) {
+    return res.status(503).json({ error: 'AI engine not configured (GEMINI_API_KEY missing).' });
   }
 
   let drawings = project.documents.filter(d => d.category === 'drawing');
@@ -454,23 +499,24 @@ const handleAnalyzeProject = async (req: express.Request, res: express.Response)
   project.processingSteps[4].status = 'in_progress';
 
   try {
-    const ai = getAi();
+    const readable = (d: ProjectDocument) => d.pages.filter((p) => p.extractionStatus === 'ok');
 
-    // Prepare document text context
+    const unreadable = [...drawings, ...specs].flatMap((d) =>
+      d.pages.filter((p) => p.extractionStatus === 'empty').map((p) => `${d.name} p.${p.pageNumber}`)
+    );
+
+    // Prepare document text context using only readable pages
     const specSummaries = specs.map(s => {
-      const pageSnippets = s.pages.map(p => `[Spec: ${s.name} | Section/Sheet: ${p.sheetOrSection || 'N/A'} | Page: ${p.pageNumber}]\n${p.text.slice(0, 3000)}`).join('\n\n');
+      const pageSnippets = readable(s).map(p => `[Spec: ${s.name} | Section/Sheet: ${p.sheetOrSection || 'N/A'} | Page: ${p.pageNumber}]\n${p.text.slice(0, 3000)}`).join('\n\n');
       return pageSnippets;
     }).join('\n===\n');
 
     const drawingSummaries = drawings.map(d => {
-      const pageSnippets = d.pages.map(p => `[Drawing: ${d.name} | Sheet: ${p.sheetOrSection || d.name} | Page: ${p.pageNumber}]\n${p.text.slice(0, 3000)}`).join('\n\n');
+      const pageSnippets = readable(d).map(p => `[Drawing: ${d.name} | Sheet: ${p.sheetOrSection || d.name} | Page: ${p.pageNumber}]\n${p.text.slice(0, 3000)}`).join('\n\n');
       return pageSnippets;
     }).join('\n===\n');
 
-    let newFindings: Finding[] = [];
-
-    if (ai) {
-      const prompt = `You are Lopri AI's Preconstruction Scope & Citation Engine. 
+    const prompt = `You are Lopri AI's Preconstruction Scope & Citation Engine. 
 Your core task is to extract exact evidence quotes and map accurate location metadata from construction specification documents and drawings. 
 
 Follow the patterns and decision logic illustrated below when processing incoming texts and generating citations:
@@ -524,266 +570,114 @@ ${specSummaries}
 ${drawingSummaries}
 `;
 
-      const response = await ai.models.generateContent({
-        model: 'gemini-2.5-flash',
-        contents: prompt,
-        config: {
-          responseMimeType: 'application/json',
-          responseSchema: {
-            type: Type.ARRAY,
-            description: 'List of evidence-backed scope findings for the electrical estimator',
-            items: {
-              type: Type.OBJECT,
-              properties: {
-                type: {
-                  type: Type.STRING,
-                  description: 'SCOPE_GAP, CONFLICT, MISSING_REFERENCE, or DOCUMENT_CONFLICT',
-                },
-                title: { type: Type.STRING, description: 'Concise descriptive title of the potential issue' },
-                systemArea: { type: Type.STRING, description: 'Electrical system, e.g., Emergency Power, Panelboards, Lighting Controls, Mechanical Feeds' },
-                explanation: { type: Type.STRING, description: 'Cautious, objective junior estimator explanation' },
-                confidence: { type: Type.STRING, description: 'HIGH, MEDIUM, or LOW' },
-                confidenceRationale: { type: Type.STRING, description: 'Brief rationale explaining confidence level' },
-                sourceA: {
-                  type: Type.OBJECT,
-                  description: 'Specification evidence',
-                  properties: {
-                    documentName: { type: Type.STRING },
-                    sectionNumber: { type: Type.STRING },
-                    pageNumber: { type: Type.INTEGER },
-                    location: { type: Type.STRING },
-                    relevantText: { type: Type.STRING },
-                    highlightSnippet: { type: Type.STRING },
-                  },
-                  required: ['documentName', 'pageNumber', 'relevantText'],
-                },
-                sourceB: {
-                  type: Type.OBJECT,
-                  description: 'Drawing evidence',
-                  properties: {
-                    documentName: { type: Type.STRING },
-                    sheetNumber: { type: Type.STRING },
-                    pageNumber: { type: Type.INTEGER },
-                    location: { type: Type.STRING },
-                    relevantText: { type: Type.STRING },
-                    highlightSnippet: { type: Type.STRING },
-                  },
-                  required: ['documentName', 'pageNumber', 'relevantText'],
-                },
+    const response = await ai.models.generateContent({
+      model: 'gemini-2.5-flash',
+      contents: prompt,
+      config: {
+        temperature: 0,
+        responseMimeType: 'application/json',
+        responseSchema: {
+          type: Type.ARRAY,
+          description: 'List of evidence-backed scope findings for the electrical estimator',
+          items: {
+            type: Type.OBJECT,
+            properties: {
+              type: {
+                type: Type.STRING,
+                description: 'SCOPE_GAP, CONFLICT, MISSING_REFERENCE, or DOCUMENT_CONFLICT',
               },
-              required: ['type', 'title', 'systemArea', 'explanation', 'confidence', 'confidenceRationale', 'sourceA', 'sourceB'],
+              title: { type: Type.STRING, description: 'Concise descriptive title of the potential issue' },
+              systemArea: { type: Type.STRING, description: 'Electrical system, e.g., Emergency Power, Panelboards, Lighting Controls, Mechanical Feeds' },
+              explanation: { type: Type.STRING, description: 'Cautious, objective junior estimator explanation' },
+              confidence: { type: Type.STRING, description: 'HIGH, MEDIUM, or LOW' },
+              confidenceRationale: { type: Type.STRING, description: 'Brief rationale explaining confidence level' },
+              sourceA: {
+                type: Type.OBJECT,
+                description: 'Specification evidence',
+                properties: {
+                  documentName: { type: Type.STRING },
+                  sectionNumber: { type: Type.STRING },
+                  pageNumber: { type: Type.INTEGER },
+                  location: { type: Type.STRING },
+                  relevantText: { type: Type.STRING },
+                  highlightSnippet: { type: Type.STRING },
+                },
+                required: ['documentName', 'pageNumber', 'relevantText'],
+              },
+              sourceB: {
+                type: Type.OBJECT,
+                description: 'Drawing evidence',
+                properties: {
+                  documentName: { type: Type.STRING },
+                  sheetNumber: { type: Type.STRING },
+                  pageNumber: { type: Type.INTEGER },
+                  location: { type: Type.STRING },
+                  relevantText: { type: Type.STRING },
+                  highlightSnippet: { type: Type.STRING },
+                },
+                required: ['documentName', 'pageNumber', 'relevantText'],
+              },
             },
+            required: ['type', 'title', 'systemArea', 'explanation', 'confidence', 'confidenceRationale', 'sourceA', 'sourceB'],
           },
         },
-      });
+      },
+    });
 
-      const parsedFindings = JSON.parse(response.text || '[]');
-      newFindings = parsedFindings.map((f: any, idx: number) => ({
+    const parsedFindings = JSON.parse(response.text || '[]');
+
+    const rejected: string[] = [];
+    const verified = parsedFindings.filter((f: any) => {
+      const docA = specs.find((s) => s.name === f?.sourceA?.documentName);
+      const docB = drawings.find((d) => d.name === f?.sourceB?.documentName);
+      const okA = quoteExistsOnPage(f?.sourceA?.relevantText, findPage(docA, f?.sourceA?.pageNumber));
+      const okB = quoteExistsOnPage(f?.sourceB?.relevantText, findPage(docB, f?.sourceB?.pageNumber));
+      const okType = ALLOWED_TYPES.includes(f?.type);
+      const ok = okA && okB && okType;
+      if (!ok) rejected.push(f?.title ?? 'untitled');
+      return ok;
+    });
+
+    const newFindings: Finding[] = verified.map((f: any, idx: number) => {
+      const docA = specs.find((s) => s.name === f.sourceA.documentName)!;
+      const docB = drawings.find((d) => d.name === f.sourceB.documentName)!;
+      const pageA = findPage(docA, f.sourceA.pageNumber)!;
+      const pageB = findPage(docB, f.sourceB.pageNumber)!;
+      return {
         id: `finding-${Date.now()}-${idx}`,
         projectId: project.id,
-        type: (['SCOPE_GAP', 'CONFLICT', 'MISSING_REFERENCE', 'DOCUMENT_CONFLICT'].includes(f.type) ? f.type : 'SCOPE_GAP'),
+        type: f.type,
         title: f.title,
         systemArea: f.systemArea || 'Electrical Scope',
         explanation: f.explanation,
         confidence: (['HIGH', 'MEDIUM', 'LOW'].includes(f.confidence) ? f.confidence : 'MEDIUM'),
-        confidenceRationale: f.confidenceRationale || 'Evidence identified in uploaded project files.',
+        confidenceRationale: f.confidenceRationale || 'Verified verbatim quote match in uploaded project files.',
         sourceA: {
           id: `ev-a-${Date.now()}-${idx}`,
           type: 'specification',
-          documentName: f.sourceA.documentName || specs[0].name,
-          documentId: specs.find(s => s.name === f.sourceA.documentName)?.id || specs[0].id,
-          sectionNumber: f.sourceA.sectionNumber || 'Division 26',
-          pageNumber: Number(f.sourceA.pageNumber) || 1,
-          location: f.sourceA.location || 'Specification Section',
+          documentName: docA.name,
+          documentId: docA.id,
+          sectionNumber: f.sourceA.sectionNumber ?? null,
+          pageNumber: pageA.pageNumber,
+          location: f.sourceA.location ?? null,
           relevantText: f.sourceA.relevantText,
           highlightSnippet: f.sourceA.highlightSnippet || f.sourceA.relevantText,
         },
         sourceB: {
           id: `ev-b-${Date.now()}-${idx}`,
           type: 'drawing',
-          documentName: f.sourceB.documentName || drawings[0].name,
-          documentId: drawings.find(d => d.name === f.sourceB.documentName)?.id || drawings[0].id,
-          sheetNumber: f.sourceB.sheetNumber || drawings[0].name.replace(/\.pdf$/i, ''),
-          pageNumber: Number(f.sourceB.pageNumber) || 1,
-          location: f.sourceB.location || 'Drawing Sheet',
+          documentName: docB.name,
+          documentId: docB.id,
+          sheetNumber: f.sourceB.sheetNumber ?? null,
+          pageNumber: pageB.pageNumber,
+          location: f.sourceB.location ?? null,
           relevantText: f.sourceB.relevantText,
           highlightSnippet: f.sourceB.highlightSnippet || f.sourceB.relevantText,
         },
         status: 'PENDING',
         estimatorNotes: '',
-      }));
-    } else {
-      // If no API key is provided, perform rule-based document intelligence on the uploaded documents
-      console.log('No GEMINI_API_KEY detected, inspecting uploaded documents for scope coordination');
-      newFindings = [];
-
-      // Check for common scope cross-check patterns in the user's actual uploaded documents
-      const specTextCombined = specs.flatMap(s => s.pages.map(p => ({ doc: s, page: p, text: (p.text || '').toLowerCase() })));
-      const dwgTextCombined = drawings.flatMap(d => d.pages.map(p => ({ doc: d, page: p, text: (p.text || '').toLowerCase() })));
-
-      const checkTopics = [
-        {
-          title: 'Arc Flash Hazard Analysis & Short Circuit Study Scope',
-          systemArea: 'Engineering Studies & Coordination',
-          type: 'SCOPE_GAP' as const,
-          keywords: ['arc flash', 'selective coordination', 'short circuit study', 'fault current study', 'power system study', '26 05 73', '260573'],
-          explanation: 'Specification mandates third-party engineering firm computer-based arc flash and short circuit coordination study with equipment warning labels. Verify if drawing general notes include engineering study allowance or designate engineer of record responsibility.',
-        },
-        {
-          title: 'Conductor / Bus Metallurgy Coordination (Copper vs. Aluminum)',
-          systemArea: 'Power Distribution',
-          type: 'CONFLICT' as const,
-          keywords: ['copper', 'aluminum', 'bus', 'neutral', 'compact aluminum', 'conductor', 'feeder'],
-          explanation: 'Specification mandates 98% conductivity copper conductors/bussing, whereas drawing schedules or feeder tags note aluminum conductors. Estimator should clarify metallurgy standard prior to bid submittal.',
-        },
-        {
-          title: 'Emergency Standby Generator & ATS Scope Coordination',
-          systemArea: 'Emergency Power Systems',
-          type: 'SCOPE_GAP' as const,
-          keywords: ['emergency', 'standby', 'generator', 'ats', 'transfer switch', 'day tank', '26 32 13', '26 36 23'],
-          explanation: 'Specification contains provisions for packaged standby generator or automatic transfer switch equipment, but drawing linework or schedules may lack corresponding feeder tags, pad details, or remote annunciator conduit.',
-        },
-        {
-          title: 'Surge Protective Device (SPD / TVSS) Integration Scope',
-          systemArea: 'Surge Protection & Power Quality',
-          type: 'SCOPE_GAP' as const,
-          keywords: ['surge protective', 'spd', 'tvss', 'transient voltage', 'surge suppressor', '26 43 13', '264313'],
-          explanation: 'Specification Section 26 43 13 mandates Type 1 or Type 2 surge protective devices at main service equipment and sub-panels. Verify if panel schedules designate dedicated disconnect breakers or integral surge suppression units.',
-        },
-        {
-          title: 'Motor Disconnect Switch & Mechanical Equipment Coordination',
-          systemArea: 'Motor Controls & Mechanical Interlocks',
-          type: 'CONFLICT' as const,
-          keywords: ['disconnect', 'fusible', 'non-fusible', 'safety switch', 'vfd', 'starter', 'chiller', 'ahu', 'rtu', 'motor', '26 29 23'],
-          explanation: 'Division 26 requires local fusible disconnect switches with auxiliary interlock contacts for mechanical motors, while drawings show non-fusible units or designate disconnects "by mechanical contractor".',
-        },
-        {
-          title: 'NEMA Enclosure Environmental Rating Coordination',
-          systemArea: 'Equipment Enclosures',
-          type: 'CONFLICT' as const,
-          keywords: ['nema 3r', 'nema 4x', 'nema 12', 'weatherproof', 'outdoor enclosure', 'stainless steel', 'damp location'],
-          explanation: 'Specification mandates NEMA 3R weatherproof or NEMA 4X stainless steel enclosures for exterior or washdown areas, while drawing details call out standard NEMA 1 indoor cabinets.',
-        },
-        {
-          title: 'Lighting Control System & Daylight Harvesting Sensor Scope',
-          systemArea: 'Lighting Controls',
-          type: 'SCOPE_GAP' as const,
-          keywords: ['daylight', 'photocell', 'occupancy sensor', 'lighting control', 'dimming', '0-10v', 'relay panel', 'title 24', 'ashrae', '26 09 23'],
-          explanation: 'Energy conservation codes and Section 26 09 23 require automated daylight harvesting sensors and low-voltage relay panels. Verify if floor plans reflect required power packs, sensors, and low-voltage control cabling.',
-        },
-        {
-          title: 'Grounding Electrode System & Ufer Ground Coordination',
-          systemArea: 'Grounding & Bonding',
-          type: 'MISSING_REFERENCE' as const,
-          keywords: ['ufer ground', 'concrete-encased', 'ground ring', 'counterpoise', 'ground rod', '25 ohms', '5 ohms', 'grounding electrode', '26 05 26', '260526'],
-          explanation: 'Specification Section 26 05 26 specifies concrete-encased Ufer electrode and supplementary ground ring with maximum resistance testing. Verify whether drawing electrical single-line riser depicts corresponding ground riser details.',
-        },
-        {
-          title: 'Switchboard & Panelboard AIC Withstand Rating Coordination',
-          systemArea: 'Overcurrent Protection',
-          type: 'CONFLICT' as const,
-          keywords: ['kaic', 'aic rating', 'short circuit rating', 'sccr', 'fault current', '65k', '42k', '100k', 'interrupting rating'],
-          explanation: 'Specification mandates minimum 65kAIC or 42kAIC series-rated or fully rated switchgear, while drawing panel schedules show lower 10kAIC or 22kAIC rated equipment, risking code rejection by the AHJ.',
-        },
-        {
-          title: 'Transformer K-Factor & Temperature Rise Rating Coordination',
-          systemArea: 'Dry-Type Transformers',
-          type: 'CONFLICT' as const,
-          keywords: ['transformer', 'k-factor', 'k-13', 'k-4', 'k-20', 'temperature rise', '115 deg', '80 deg', 'dry-type', '26 22 00', '262200'],
-          explanation: 'Specification Section 26 22 00 calls for K-13 non-linear harmonic mitigation transformers with 115°C or 80°C temperature rise, whereas drawing equipment schedule lists standard general-purpose 150°C units.',
-        },
-        {
-          title: 'Fire Alarm Duct Smoke Detector HVAC Shutdown Interlocks',
-          systemArea: 'Life Safety & Interlocks',
-          type: 'SCOPE_GAP' as const,
-          keywords: ['duct smoke detector', 'fire alarm shutdown', 'hvac shutdown', 'fan shutdown', 'fire damper', 'control relay', 'air handler'],
-          explanation: 'Division 26 specifications require 120V control power and shutdown interlocks for mechanical duct smoke detectors. Ensure wiring and auxiliary relay modules are included in the electrical base bid.',
-        },
-        {
-          title: 'Elevator Shunt Trip Breaker & Machine Room Power Scope',
-          systemArea: 'Conveying Systems & Power',
-          type: 'SCOPE_GAP' as const,
-          keywords: ['elevator', 'shunt trip', 'pit light', 'machine room', 'elevator recall', 'battery lowering', 'fire service'],
-          explanation: 'Specifications require shunt-trip main breaker with 120V control power and battery control bus for elevator pit sprinkler coordination, but electrical distribution schedule depicts standard thermal-magnetic breaker.',
-        },
-        {
-          title: 'Conduit Raceway Material Specification (EMT / RMC / PVC)',
-          systemArea: 'Raceways & Conduits',
-          type: 'CONFLICT' as const,
-          keywords: ['rigid metal conduit', 'rmc', 'intermediate metal', 'imc', 'pvc coated', 'schedule 40', 'schedule 80', 'emt', 'raceway', '26 05 33'],
-          explanation: 'Specification mandates Rigid Metal Conduit (RMC) or PVC-coated rigid for underground, exterior, and exposed slab transitions, while drawing notes allow Schedule 40 PVC or EMT throughout.',
-        },
-        {
-          title: 'Isolated Ground (IG) & Hospital Grade Device Coordination',
-          systemArea: 'Wiring Devices',
-          type: 'CONFLICT' as const,
-          keywords: ['isolated ground', 'ig receptacle', 'hospital grade', 'dedicated neutral', 'orange triangle', '26 27 26', '262726'],
-          explanation: 'Specification mandates isolated ground receptacles with dedicated insulated green grounding conductors for sensitive IT/medical circuits, while drawing floor plans illustrate standard convenience duplex outlets.',
-        },
-        {
-          title: 'Power Monitoring, Sub-Metering & CT Cabinet Scope',
-          systemArea: 'Metering & Energy Management',
-          type: 'SCOPE_GAP' as const,
-          keywords: ['metering', 'power monitor', 'digital meter', 'modbus', 'bacnet', 'ethernet meter', 'ct cabinet', 'current transformer', '26 09 13', '260913'],
-          explanation: 'Section 26 09 13 requires digital multi-function power meters and tenant CT cabinets with building management network integration, but drawing one-line diagram lacks metering CT/PT wiring notation.',
-        },
-        {
-          title: 'NETA Acceptance Testing & Infrared Thermographic Survey Scope',
-          systemArea: 'Testing & Commissioning',
-          type: 'SCOPE_GAP' as const,
-          keywords: ['neta', 'acceptance testing', 'infrared', 'thermographic', 'megger', 'commissioning', 'torque verification', 'testing agency'],
-          explanation: 'Specification mandates independent third-party NETA certified testing and full-load infrared thermographic survey prior to substantial completion. Estimator must carry subcontractor testing allowance.',
-        },
-      ];
-
-      for (const topic of checkTopics) {
-        const specMatch = specTextCombined.find(item => topic.keywords.some(k => item.text.includes(k)));
-        const dwgMatch = dwgTextCombined.find(item => topic.keywords.some(k => item.text.includes(k)));
-
-        if (specMatch && dwgMatch) {
-          const specExcerpt = specMatch.page.text.slice(0, 180).trim();
-          const dwgExcerpt = dwgMatch.page.text.slice(0, 180).trim();
-
-          newFindings.push({
-            id: `finding-${Date.now()}-${newFindings.length}`,
-            projectId: project.id,
-            title: topic.title,
-            type: 'CONFLICT',
-            confidence: 'HIGH',
-            confidenceRationale: `Direct textual evidence identified across ${specMatch.doc.name} and ${dwgMatch.doc.name}`,
-            systemArea: topic.systemArea,
-            explanation: topic.explanation,
-            sourceA: {
-              id: `src-a-${Date.now()}-${newFindings.length}`,
-              type: 'specification',
-              documentId: specMatch.doc.id,
-              documentName: specMatch.doc.name,
-              sectionNumber: specMatch.page.sheetOrSection,
-              pageNumber: specMatch.page.pageNumber,
-              location: `${specMatch.page.sheetOrSection || 'Section'}, Page ${specMatch.page.pageNumber}`,
-              relevantText: specExcerpt,
-              highlightSnippet: specExcerpt.slice(0, 50),
-            },
-            sourceB: {
-              id: `src-b-${Date.now()}-${newFindings.length}`,
-              type: 'drawing',
-              documentId: dwgMatch.doc.id,
-              documentName: dwgMatch.doc.name,
-              sheetNumber: dwgMatch.page.sheetOrSection,
-              pageNumber: dwgMatch.page.pageNumber,
-              location: `${dwgMatch.page.sheetOrSection || 'Sheet'}, Page ${dwgMatch.page.pageNumber}`,
-              relevantText: dwgExcerpt,
-              highlightSnippet: dwgExcerpt.slice(0, 50),
-            },
-            status: 'PENDING',
-            estimatorNotes: '',
-          });
-        }
-      }
-
-      // If no issues were detected with verified quotes, keep newFindings as empty array ([]).
-      // We NEVER invent or force synthetic findings for the estimator.
-    }
+      };
+    });
 
     project.findings = newFindings;
     project.status = 'ready';

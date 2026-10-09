@@ -13,10 +13,10 @@ export interface EvidenceSource {
   type: 'specification' | 'drawing';
   documentName: string;
   documentId?: string;
-  sectionNumber?: string; // e.g. "26 05 00", "26 32 13"
-  sheetNumber?: string; // e.g. "E1.1", "E3.2"
+  sectionNumber?: string | null; // e.g. "26 05 00", "26 32 13"
+  sheetNumber?: string | null; // e.g. "E1.1", "E3.2"
   pageNumber: number;
-  location?: string; // e.g. "Panel Schedule", "General Note 4", "Equipment Schedule"
+  location?: string | null; // e.g. "Panel Schedule", "General Note 4", "Equipment Schedule"
   relevantText: string;
   highlightSnippet?: string;
 }
@@ -42,6 +42,7 @@ export interface DocumentPage {
   sheetOrSection?: string;
   title?: string;
   text: string;
+  extractionStatus?: 'ok' | 'empty';
   notes?: string[];
   tables?: Array<{
     title: string;
