@@ -162,17 +162,41 @@ export const UploadModal: React.FC<UploadModalProps> = ({
         <form onSubmit={handleSubmit} className="space-y-4">
           {/* Project Name */}
           <div>
-            <label className="block text-xs font-bold text-slate-700 mb-1">
-              Project Name
-            </label>
+            <div className="flex items-center justify-between mb-1">
+              <label className="block text-xs font-bold text-slate-700">
+                Project Name <span className="text-amber-600">*</span>
+              </label>
+              {selectedFiles.length > 0 && !projectName.trim() && (
+                <span className="text-[11px] font-semibold text-amber-600 animate-pulse flex items-center gap-1">
+                  <span className="w-1.5 h-1.5 rounded-full bg-amber-500 animate-ping" />
+                  Required
+                </span>
+              )}
+            </div>
             <input
               type="text"
               placeholder="e.g. Metro Health Surgery Center - Electrical Package"
               value={projectName}
               onChange={(e) => setProjectName(e.target.value)}
-              className="w-full bg-slate-50 text-xs text-slate-900 placeholder-slate-400 rounded-xl border border-slate-200 px-3.5 py-2.5 focus:outline-none focus:ring-2 focus:ring-amber-500/20 focus:border-amber-500 font-sans"
+              className={`w-full text-xs text-slate-900 placeholder-slate-400 rounded-xl px-3.5 py-2.5 font-sans transition-all duration-300 focus:outline-none ${
+                selectedFiles.length > 0 && !projectName.trim()
+                  ? 'bg-amber-50/70 border-2 border-amber-500 shadow-[0_0_15px_rgba(245,158,11,0.25)] ring-2 ring-amber-400/40 animate-pulse focus:ring-amber-500'
+                  : 'bg-slate-50 border border-slate-200 focus:ring-2 focus:ring-amber-500/20 focus:border-amber-500'
+              }`}
               required
             />
+            {/* Flashing helper reminder below the project name input */}
+            {selectedFiles.length > 0 && !projectName.trim() && (
+              <div className="mt-1.5 p-2 rounded-lg bg-amber-500/10 border border-amber-400/60 text-amber-900 text-[11px] font-medium flex items-center gap-2 animate-bounce">
+                <span className="flex h-2 w-2 relative shrink-0">
+                  <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-amber-400 opacity-75"></span>
+                  <span className="relative inline-flex rounded-full h-2 w-2 bg-amber-500"></span>
+                </span>
+                <span>
+                  Please enter the project name above to enable cross-check analysis.
+                </span>
+              </div>
+            )}
           </div>
 
           {/* Drag & Drop Area */}

@@ -650,7 +650,7 @@ ${drawingSummaries}
         title: f.title,
         systemArea: f.systemArea || 'Electrical Scope',
         explanation: f.explanation,
-        confidence: (['HIGH', 'MEDIUM', 'LOW'].includes(f.confidence) ? f.confidence : 'MEDIUM'),
+        confidence: 'MEDIUM',
         confidenceRationale: f.confidenceRationale || 'Verified verbatim quote match in uploaded project files.',
         sourceA: {
           id: `ev-a-${Date.now()}-${idx}`,

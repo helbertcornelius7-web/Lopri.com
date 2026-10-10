@@ -13,7 +13,6 @@ import {
   RotateCcw, 
   ShieldCheck, 
   Play,
-  Settings,
   Terminal,
   LayoutGrid,
   Trash2
@@ -205,15 +204,6 @@ export const StudioHeader: React.FC<StudioHeaderProps> = React.memo(({
           title="Reset Workspace"
         >
           <RotateCcw className="w-3.5 h-3.5" />
-        </button>
-
-        {/* Settings gear icon matching top-right of screenshot */}
-        <button
-          onClick={onOpenPipeline}
-          className="p-1.5 rounded-md text-slate-500 hover:text-slate-800 hover:bg-slate-100 transition-colors"
-          title="Settings & Grounding Pipeline"
-        >
-          <Settings className="w-4 h-4" />
         </button>
 
         {/* Right Inspector Toggle (visible in playground mode or toggleable) */}

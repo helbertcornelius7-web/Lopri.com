@@ -1,6 +1,7 @@
-import React, { useState, useRef, useEffect } from 'react';
+import React, { useState, useRef, useEffect, useMemo } from 'react';
 import { Project, ChatMessage } from '../types';
 import { usePdfProject } from '../context/PdfProjectContext';
+import { getCanvasSamplePrompts } from '../utils/projectSheets';
 import { 
   Send, 
   Sparkles, 
@@ -8,7 +9,6 @@ import {
   Layers, 
   ShieldCheck,
   X,
-  FileCheck2,
   CornerDownLeft
 } from 'lucide-react';
 
@@ -20,11 +20,13 @@ interface ProjectChatProps {
 }
 
 export const ProjectChat: React.FC<ProjectChatProps> = ({ 
+  project: propProject,
   isOpen, 
   onClose, 
   onJumpToSource 
 }) => {
   const { 
+    project: contextProject,
     chatMessages, 
     sendChatMessage, 
     isChatLoading, 
@@ -32,15 +34,11 @@ export const ProjectChat: React.FC<ProjectChatProps> = ({
     pdfFiles 
   } = usePdfProject();
 
+  const currentProject = propProject || contextProject;
   const [inputQuery, setInputQuery] = useState('');
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
-  const sampleQuestions = [
-    "What is the required panelboard bus material (Section 26 24 16)?",
-    "What does the specification mandate for copper bussing ratings?",
-    "Where is AHU-1 fed from according to drawings?",
-    "What emergency power requirements exist in Division 26?"
-  ];
+  const sampleQuestions = useMemo(() => getCanvasSamplePrompts(currentProject), [currentProject]);
 
   useEffect(() => {
     if (isOpen) {
@@ -67,16 +65,10 @@ export const ProjectChat: React.FC<ProjectChatProps> = ({
               <Sparkles className="w-4 h-4" />
             </div>
             <div>
-              <div className="flex items-center gap-2">
-                <h3 className="text-sm font-bold text-slate-900">Grounded Inquiries Stream</h3>
-                <span className="text-[10px] font-semibold px-2 py-0.5 rounded-full bg-emerald-50 text-emerald-700 border border-emerald-200 flex items-center gap-1">
-                  <FileCheck2 className="w-3 h-3 text-emerald-600" />
-                  PDF Context Active
-                </span>
-              </div>
+              <h3 className="text-sm font-bold text-slate-900">Project Inquiries</h3>
               <p className="text-[11px] text-slate-500 flex items-center gap-1 mt-0.5">
                 <ShieldCheck className="w-3 h-3 text-emerald-600" />
-                Grounded in {activePdf?.name || `${pdfFiles.length} project documents`}
+                {activePdf?.name || `${pdfFiles.length} project documents`}
               </p>
             </div>
           </div>
@@ -148,20 +140,22 @@ export const ProjectChat: React.FC<ProjectChatProps> = ({
         {/* Input Bar */}
         <div className="p-3 border-t border-slate-200 bg-white space-y-2">
           {/* Quick Suggestions Chips */}
-          <div className="flex items-center gap-1.5 overflow-x-auto pb-1 no-scrollbar text-xs">
-            <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider shrink-0 mr-1">
-              Sample Prompts:
-            </span>
-            {sampleQuestions.map((q, i) => (
-              <button
-                key={i}
-                onClick={() => handleSend(q)}
-                className="bg-slate-50 hover:bg-slate-100 text-slate-600 hover:text-slate-900 px-2.5 py-1 rounded-full text-[11px] border border-slate-200 shadow-2xs whitespace-nowrap transition-colors"
-              >
-                {q}
-              </button>
-            ))}
-          </div>
+          {sampleQuestions.length > 0 && (
+            <div className="flex items-center gap-1.5 overflow-x-auto pb-1 no-scrollbar text-xs">
+              <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider shrink-0 mr-1">
+                Sample Prompts:
+              </span>
+              {sampleQuestions.map((q, i) => (
+                <button
+                  key={i}
+                  onClick={() => handleSend(q)}
+                  className="bg-slate-50 hover:bg-slate-100 text-slate-600 hover:text-slate-900 px-2.5 py-1 rounded-full text-[11px] border border-slate-200 shadow-2xs whitespace-nowrap transition-colors"
+                >
+                  {q}
+                </button>
+              ))}
+            </div>
+          )}
 
           <form
             onSubmit={(e) => {

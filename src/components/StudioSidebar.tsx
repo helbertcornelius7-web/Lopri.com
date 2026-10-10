@@ -11,9 +11,6 @@ import {
   Gauge, 
   BookOpen, 
   ChevronRight, 
-  Bell, 
-  Settings, 
-  Search, 
   KeyRound, 
   Sparkles, 
   Menu,
@@ -358,38 +355,6 @@ export const StudioSidebar: React.FC<StudioSidebarProps> = React.memo(({
         {/* User Feedback (Tally Form) */}
         <div className="px-1">
           <FeedbackButton variant="sidebar" />
-        </div>
-
-        {/* Action icons row (Bell, Settings, Search, Upload) */}
-        <div className="flex items-center justify-between px-1 text-slate-500">
-          <button 
-            onClick={onOpenPipeline}
-            className="p-1.5 rounded-lg hover:bg-slate-100 hover:text-slate-800 transition-colors" 
-            title="Processing Pipeline Status"
-          >
-            <Bell className="w-4 h-4" />
-          </button>
-          <button 
-            onClick={onOpenExport}
-            className="p-1.5 rounded-lg hover:bg-slate-100 hover:text-slate-800 transition-colors" 
-            title="Export Scope & RFI PDF"
-          >
-            <Settings className="w-4 h-4" />
-          </button>
-          <button 
-            onClick={() => onChangeView('playground')}
-            className="p-1.5 rounded-lg hover:bg-slate-100 hover:text-slate-800 transition-colors" 
-            title="Search Drawing Sheets & Specs"
-          >
-            <Search className="w-4 h-4" />
-          </button>
-          <button 
-            onClick={onOpenUpload}
-            className="p-1.5 rounded-lg hover:bg-slate-100 hover:text-slate-800 transition-colors" 
-            title="Upload New Drawing & Specification PDFs"
-          >
-            <Plus className="w-4 h-4" />
-          </button>
         </div>
 
         {/* User / Estimator Profile Bar */}

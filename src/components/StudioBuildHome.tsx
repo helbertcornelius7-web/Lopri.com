@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useMemo } from 'react';
 import { Project, Finding, FindingType, FindingStatus } from '../types';
 import { FeedbackButton } from './FeedbackButton';
 import { 
@@ -25,6 +25,7 @@ import {
   Folder,
   Play
 } from 'lucide-react';
+import { getSampleInquiryChips, getLuckyPrompts, InquiryChip } from '../utils/projectSheets';
 
 interface StudioBuildHomeProps {
   project: Project;
@@ -65,24 +66,22 @@ export const StudioBuildHome: React.FC<StudioBuildHomeProps> = React.memo(({
     onOpenPlayground();
   };
 
+  const sampleInquiryChips = useMemo(() => getSampleInquiryChips(project), [project]);
+  const luckyPrompts = useMemo(() => getLuckyPrompts(project), [project]);
+
   const handleFeelingLucky = () => {
-    const luckyPrompts = [
-      "Check AHU-1 feeder ampacity and disconnect coordination on E2.1",
-      "Verify copper vs aluminum busbar specifications in Section 26 24 16",
-      "Audit emergency generator fuel storage requirements against site plans",
-      "Identify daylight harvesting sensor specifications missing from drawings"
-    ];
+    if (luckyPrompts.length === 0) return;
     const picked = luckyPrompts[Math.floor(Math.random() * luckyPrompts.length)];
     setPromptInput(picked);
   };
 
-  const quickPills = [
-    { label: 'Single-Line Diagrams (E1.1)', icon: Zap, query: 'Review single-line diagram feeder ratings and disconnects on sheet E1.1' },
-    { label: 'Panel Schedules (E2.1)', icon: Layers, query: 'Check panel schedule bus ratings and neutral sizing on sheet E2.1' },
-    { label: 'Division 26 Specifications', icon: FileText, query: 'Cross-reference Division 26 spec requirements against drawing sheets' },
-    { label: 'Missing Disconnect Switches', icon: AlertCircle, query: 'Identify mechanical equipment lacking local electrical disconnects' },
-    { label: 'Generator & Emergency Fuel', icon: Flame, query: 'Review 72-hour fuel storage tank specs vs mechanical site drawings' },
-  ];
+  const iconMap: Record<InquiryChip['iconName'], React.ComponentType<{ className?: string }>> = {
+    Zap,
+    Layers,
+    FileText,
+    AlertCircle,
+    Flame,
+  };
 
   const getTypeMeta = (type: FindingType) => {
     switch (type) {
@@ -230,23 +229,25 @@ export const StudioBuildHome: React.FC<StudioBuildHomeProps> = React.memo(({
         </div>
 
         {/* Quick Suggestion Pills Row (Exact Google AI Studio pill style) */}
-        <div className="w-full flex items-center justify-start sm:justify-center gap-2 overflow-x-auto pb-1 no-scrollbar text-xs">
-          {quickPills.map((pill, idx) => {
-            const Icon = pill.icon;
-            return (
-              <button
-                key={idx}
-                onClick={() => {
-                  setPromptInput(pill.query);
-                }}
-                className="inline-flex items-center gap-2 px-3.5 py-2 rounded-full bg-white hover:bg-slate-100 text-slate-700 border border-slate-200/80 shadow-2xs whitespace-nowrap transition-colors font-medium text-xs"
-              >
-                <Icon className="w-3.5 h-3.5 text-amber-600 shrink-0" />
-                <span>{pill.label}</span>
-              </button>
-            );
-          })}
-        </div>
+        {sampleInquiryChips.length > 0 && (
+          <div className="w-full flex items-center justify-start sm:justify-center gap-2 overflow-x-auto pb-1 no-scrollbar text-xs">
+            {sampleInquiryChips.map((chip, idx) => {
+              const Icon = iconMap[chip.iconName] || FileText;
+              return (
+                <button
+                  key={idx}
+                  onClick={() => {
+                    setPromptInput(chip.query);
+                  }}
+                  className="inline-flex items-center gap-2 px-3.5 py-2 rounded-full bg-white hover:bg-slate-100 text-slate-700 border border-slate-200/80 shadow-2xs whitespace-nowrap transition-colors font-medium text-xs"
+                >
+                  <Icon className="w-3.5 h-3.5 text-amber-600 shrink-0" />
+                  <span>{chip.label}</span>
+                </button>
+              );
+            })}
+          </div>
+        )}
 
         {/* Active Project Management Banner */}
         {project.id && project.documents.length > 0 && (

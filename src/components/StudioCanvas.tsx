@@ -1,9 +1,8 @@
-import React, { useState, useRef, useEffect } from 'react';
+import React, { useState, useRef, useEffect, useMemo } from 'react';
 import { Project, Finding, FindingStatus, ChatMessage, PdfContextFile } from '../types';
+import { getCanvasSamplePrompts, getCanvasPlaceholder } from '../utils/projectSheets';
 import { 
   Sparkles, 
-  ChevronDown, 
-  ChevronUp, 
   Send, 
   CheckCircle2, 
   XCircle, 
@@ -18,8 +17,7 @@ import {
   AlertTriangle,
   AlertCircle,
   HelpCircle,
-  MessageSquare,
-  FileCheck2
+  MessageSquare
 } from 'lucide-react';
 
 interface StudioCanvasProps {
@@ -51,7 +49,6 @@ export const StudioCanvas: React.FC<StudioCanvasProps> = React.memo(({
   activePdf,
   pdfFiles = [],
 }) => {
-  const [isSystemPromptOpen, setIsSystemPromptOpen] = useState(false);
   const [promptInput, setPromptInput] = useState('');
   const [notes, setNotes] = useState(activeFinding?.estimatorNotes || '');
   const [isSavedNotes, setIsSavedNotes] = useState(false);
@@ -78,12 +75,8 @@ export const StudioCanvas: React.FC<StudioCanvasProps> = React.memo(({
     onSendMessage(query);
   };
 
-  const samplePrompts = [
-    "What does the specification say about emergency power?",
-    "Where is AHU-1 fed from according to drawing E2.1?",
-    "What is the required bus material and neutral size in 26 24 16?",
-    "Which spec section covers daylight harvesting sensors?"
-  ];
+  const samplePrompts = useMemo(() => getCanvasSamplePrompts(project), [project]);
+  const canvasPlaceholder = useMemo(() => getCanvasPlaceholder(project), [project]);
 
   const getTypeMeta = (type?: string) => {
     switch (type) {
@@ -121,43 +114,6 @@ export const StudioCanvas: React.FC<StudioCanvasProps> = React.memo(({
     <main className="flex-1 flex flex-col h-full bg-slate-50 overflow-hidden relative">
       {/* Scrollable Playground Canvas Area */}
       <div className="flex-1 overflow-y-auto px-4 sm:px-8 py-5 space-y-5 pb-36">
-        {/* Google AI Studio Signature: Collapsible System Instructions */}
-        <div className="bg-white rounded-xl border border-slate-200 shadow-2xs overflow-hidden transition-all">
-          <div
-            onClick={() => setIsSystemPromptOpen(!isSystemPromptOpen)}
-            className="p-3 bg-slate-50/70 hover:bg-slate-100/70 flex items-center justify-between cursor-pointer text-xs font-semibold text-slate-700 transition-colors"
-          >
-            <div className="flex items-center gap-2">
-              <span className="px-2 py-0.5 rounded-md bg-amber-100 text-amber-900 font-mono text-[11px] font-bold border border-amber-200">
-                System Instructions
-              </span>
-              <span className="text-slate-500 font-normal truncate max-w-md hidden sm:inline">
-                Electrical Estimator Persona • Specification Cross-Check Grounding Mandate
-              </span>
-            </div>
-            <div className="flex items-center gap-1 text-slate-400">
-              <span className="text-[11px] hidden sm:inline">
-                {isSystemPromptOpen ? 'Collapse' : 'Expand'}
-              </span>
-              {isSystemPromptOpen ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
-            </div>
-          </div>
-
-          {isSystemPromptOpen && (
-            <div className="p-4 border-t border-slate-200 bg-white font-mono text-xs text-slate-700 leading-relaxed space-y-2">
-              <p>
-                <strong>Role:</strong> Cautious Senior Electrical Estimator AI.
-              </p>
-              <p>
-                <strong>Mandate:</strong> Cross-reference Division 26 electrical specifications against drawing sheets, single-line diagrams, and equipment schedules. Flag uncoordinated ratings, omitted disconnect switches, and conflicting conductor specifications.
-              </p>
-              <p className="text-amber-800 bg-amber-50 p-2 rounded-lg border border-amber-200 text-[11px]">
-                <strong>Anti-Hallucination Policy:</strong> Every finding and answer must be strictly substantiated with exact document filenames and page numbers. If an item is unrepresented in drawings, report it as a potential scope gap.
-              </p>
-            </div>
-          )}
-        </div>
-
         {/* Selected Finding Active Turn / Inspection Card */}
         {activeFinding ? (
           <div className="bg-white rounded-2xl border border-slate-200 shadow-2xs overflow-hidden space-y-0">
@@ -358,15 +314,6 @@ export const StudioCanvas: React.FC<StudioCanvasProps> = React.memo(({
         {/* Conversational Turns / Prompt Queries Stream */}
         {chatMessages.length > 0 && (
           <div className="space-y-4 pt-3 border-t border-slate-200/80">
-            <div className="flex items-center justify-between px-1">
-              <div className="text-[11px] font-bold uppercase tracking-wider text-slate-400">
-                Grounded Inquiries Stream ({chatMessages.length})
-              </div>
-              <div className="flex items-center gap-1.5 text-[10px] font-medium text-emerald-700 bg-emerald-50 px-2.5 py-0.5 rounded-full border border-emerald-200">
-                <FileCheck2 className="w-3 h-3 text-emerald-600 shrink-0" />
-                <span>PDF Context: {activePdf?.name || (pdfFiles.length > 0 ? pdfFiles[0].name : 'Active Specifications')}</span>
-              </div>
-            </div>
 
             {chatMessages.map((msg) => (
               <div
@@ -435,22 +382,25 @@ export const StudioCanvas: React.FC<StudioCanvasProps> = React.memo(({
       <div className="absolute bottom-0 left-0 right-0 bg-gradient-to-t from-slate-50 via-slate-50/95 to-transparent pt-4 pb-4 px-4 sm:px-8 pointer-events-none z-20">
         <div className="max-w-4xl mx-auto space-y-2 pointer-events-auto">
           {/* Quick Prompt Suggestions Chips */}
-          <div className="flex items-center gap-1.5 overflow-x-auto pb-1 no-scrollbar text-xs">
-            <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider shrink-0 mr-1">
-              Suggestions:
-            </span>
-            {samplePrompts.map((sp, i) => (
-              <button
-                key={i}
-                onClick={() => {
-                  setPromptInput(sp);
-                }}
-                className="bg-white/90 hover:bg-white text-slate-600 hover:text-slate-900 px-2.5 py-1 rounded-full text-[11px] border border-slate-200 shadow-2xs whitespace-nowrap transition-colors"
-              >
-                {sp}
-              </button>
-            ))}
-          </div>
+          {/* Quick Prompt Suggestions Chips */}
+          {samplePrompts.length > 0 && (
+            <div className="flex items-center gap-1.5 overflow-x-auto pb-1 no-scrollbar text-xs">
+              <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider shrink-0 mr-1">
+                Suggestions:
+              </span>
+              {samplePrompts.map((sp, i) => (
+                <button
+                  key={i}
+                  onClick={() => {
+                    setPromptInput(sp);
+                  }}
+                  className="bg-white/90 hover:bg-white text-slate-600 hover:text-slate-900 px-2.5 py-1 rounded-full text-[11px] border border-slate-200 shadow-2xs whitespace-nowrap transition-colors"
+                >
+                  {sp}
+                </button>
+              ))}
+            </div>
+          )}
 
           {/* Prompt Form */}
           <form
@@ -463,7 +413,7 @@ export const StudioCanvas: React.FC<StudioCanvasProps> = React.memo(({
 
             <input
               type="text"
-              placeholder="Ask a question about project drawings & specs, or enter a prompt (e.g. 'Check AHU-1 feeder size')..."
+              placeholder={canvasPlaceholder}
               value={promptInput}
               onChange={(e) => setPromptInput(e.target.value)}
               className="flex-1 bg-transparent text-xs text-slate-900 placeholder-slate-400 focus:outline-none font-sans px-1"
