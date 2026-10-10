@@ -5,6 +5,7 @@ import multer from 'multer';
 import { GoogleGenAI, Type } from  '@google/genai';
 import type { Project, ProjectDocument, Finding, DocumentPage } from './src/types';
 import { sanitizePdfText } from './src/utils/sanitizePdfText.js';
+import { extractPdfPages } from './src/utils/extractPdfPages.js';
 import { SAMPLE_PROJECT } from './src/demoData.js';
 const g: any = globalThis;
 if (typeof g.DOMMatrix === 'undefined') g.DOMMatrix = class DOMMatrix {};
@@ -159,99 +160,7 @@ app.post('/api/projects/load-sample', (req, res) => {
   res.json(cloned);
 });
 
-const MIN_USABLE_CHARS = 40;
 
-// Helper to extract text from raw PDF stream when standard PDFParse encounters unusual compression or CAD vector objects
-function extractFallbackPdfText(buffer: Buffer, originalName: string, isDrawing: boolean): {
-  text: string;
-  pageCount: number;
-  pages: DocumentPage[];
-} {
-  const pages: DocumentPage[] = [];
-  let extractedText = '';
-
-  try {
-    const streamRegex = /stream[\r\n]+([\s\S]*?)[\r\n]+endstream/g;
-    const latinString = buffer.toString('latin1');
-    let match: RegExpExecArray | null;
-    const decompressedChunks: string[] = [];
-
-    while ((match = streamRegex.exec(latinString)) !== null) {
-      const rawStream = Buffer.from(match[1], 'latin1');
-      try {
-        const decompressed = zlib.inflateSync(rawStream);
-        decompressedChunks.push(decompressed.toString('utf-8'));
-      } catch {
-        try {
-          const rawDecompressed = zlib.inflateRawSync(rawStream);
-          decompressedChunks.push(rawDecompressed.toString('utf-8'));
-        } catch {
-          // uncompressed stream or non-flate
-        }
-      }
-    }
-
-    const combinedStreams = decompressedChunks.join('\n');
-    const textPieces: string[] = [];
-    const tjRegex = /\(([^()]*)\)\s*Tj/g;
-    let tjMatch: RegExpExecArray | null;
-    while ((tjMatch = tjRegex.exec(combinedStreams)) !== null) {
-      if (tjMatch[1].trim()) textPieces.push(tjMatch[1].trim());
-    }
-
-    const tjArrayRegex = /\[([^\[\]]*)\]\s*TJ/g;
-    let tjArrMatch: RegExpExecArray | null;
-    while ((tjArrMatch = tjArrayRegex.exec(combinedStreams)) !== null) {
-      const parts = tjArrMatch[1].match(/\(([^()]*)\)/g);
-      if (parts) {
-        const line = parts.map(p => p.slice(1, -1)).join('');
-        if (line.trim()) textPieces.push(line.trim());
-      }
-    }
-
-    if (textPieces.length > 0) {
-      extractedText = sanitizePdfText(textPieces.join(' '));
-    }
-  } catch (e) {
-    console.warn('Fallback stream decompression warning:', e);
-  }
-
-  // Detect page count from /Type /Page
-  const rawStr = buffer.toString('latin1');
-  const pageMatches = rawStr.match(/\/Type\s*\/Page\b/g);
-  const detectedCount = Math.max(pageMatches ? pageMatches.length : 1, 1);
-
-  if (extractedText.length > 50) {
-    const chunkSize = Math.max(1, Math.ceil(extractedText.length / detectedCount));
-    for (let pNum = 1; pNum <= detectedCount; pNum++) {
-      const chunk = extractedText.slice((pNum - 1) * chunkSize, pNum * chunkSize).trim();
-      const text = chunk;
-      pages.push({
-        pageNumber: pNum,
-        sheetOrSection: isDrawing ? `Sheet ${pNum} - ${originalName.replace(/\.pdf$/i, '')}` : `Section ${pNum}`,
-        title: `${isDrawing ? 'Drawing Sheet' : 'Spec Section'} (Page ${pNum})`,
-        text,
-        extractionStatus: text.length >= MIN_USABLE_CHARS ? 'ok' : 'empty',
-      });
-    }
-  } else {
-    for (let pNum = 1; pNum <= detectedCount; pNum++) {
-      pages.push({
-        pageNumber: pNum,
-        sheetOrSection: isDrawing ? `Sheet ${pNum} - ${originalName.replace(/\.pdf$/i, '')}` : `Section ${pNum}`,
-        title: isDrawing ? `Drawing Sheet ${pNum} (${originalName})` : `Spec Section ${pNum} (${originalName})`,
-        text: '',
-        extractionStatus: 'empty',
-      });
-    }
-  }
-
-  return {
-    text: extractedText,
-    pageCount: detectedCount,
-    pages,
-  };
-}
 
 // 6. Upload PDF documents to project (supports both /upload and /documents endpoints)
 const handleDocumentUpload = async (req: express.Request, res: express.Response) => {
@@ -312,80 +221,7 @@ const handleDocumentUpload = async (req: express.Request, res: express.Response)
 
       const isDrawing = category === 'drawing';
 
-      let extractedText = '';
-      let pageCount = 1;
-      const pages: DocumentPage[] = [];
-
-      try {
-        const pdfParseModule: any = await import('pdf-parse');
-        const pdfParse = pdfParseModule.default || pdfParseModule;
-  const parsed: any = await pdfParse(file.buffer);
-  extractedText = parsed.text || '';
-  pageCount = parsed.numpages || (parsed.pages ? parsed.pages.length : 1);
-
-
-        if (parsed.pages && Array.isArray(parsed.pages) && parsed.pages.length > 0) {
-          parsed.pages.forEach((p: any, idx: number) => {
-            const pageTxt = sanitizePdfText(p.text || '').trim();
-            const text = pageTxt;
-            pages.push({
-              pageNumber: p.num || idx + 1,
-              sheetOrSection: isDrawing ? `Sheet ${originalName.replace(/\.pdf$/i, '')}` : `Section ${idx + 1}`,
-              title: `${isDrawing ? 'Drawing Sheet' : 'Spec Section'} (Page ${p.num || idx + 1})`,
-              text,
-              extractionStatus: text.length >= MIN_USABLE_CHARS ? 'ok' : 'empty',
-            });
-          });
-        } else {
-          // Split by form-feed or approximate page breaks
-          const rawPages = extractedText.split(/\f|\n\s*---\s*Page\s*\d+\s*---\s*\n/);
-          if (rawPages.length > 1) {
-            rawPages.forEach((txt, idx) => {
-              const cleanTxt = sanitizePdfText(txt).trim();
-              const text = cleanTxt;
-              pages.push({
-                pageNumber: idx + 1,
-                sheetOrSection: isDrawing ? `Sheet ${originalName.replace(/\.pdf$/i, '')}` : `Section ${idx + 1}`,
-                title: `${isDrawing ? 'Drawing Sheet' : 'Spec Section'} (Page ${idx + 1})`,
-                text,
-                extractionStatus: text.length >= MIN_USABLE_CHARS ? 'ok' : 'empty',
-              });
-            });
-          } else {
-            const cleanTxt = sanitizePdfText(extractedText).trim();
-            const text = cleanTxt;
-            pages.push({
-              pageNumber: 1,
-              sheetOrSection: isDrawing ? `Sheet ${originalName.replace(/\.pdf$/i, '')}` : `Section 1`,
-              title: `${isDrawing ? 'Drawing Sheet' : 'Spec Section'} (Page 1)`,
-              text,
-              extractionStatus: text.length >= MIN_USABLE_CHARS ? 'ok' : 'empty',
-            });
-          }
-        }
-      } catch (err) {
-        console.warn(`PDF parse error for ${originalName}, checking text fallback:`, err);
-        const fallback = extractFallbackPdfText(file.buffer, originalName, isDrawing);
-        extractedText = fallback.text;
-        pageCount = fallback.pageCount;
-        pages.push(...fallback.pages);
-      }
-
-      // If pages still empty (e.g. pure vector drawing), detect page count and construct sheets
-      if (pages.length === 0) {
-        const rawStr = file.buffer.toString('latin1');
-        const pageMatches = rawStr.match(/\/Type\s*\/Page\b/g);
-        const totalSheets = Math.max(pageCount, pageMatches ? pageMatches.length : 1, 1);
-        for (let pNum = 1; pNum <= totalSheets; pNum++) {
-          pages.push({
-            pageNumber: pNum,
-            sheetOrSection: isDrawing ? `Sheet ${pNum} - ${originalName.replace(/\.pdf$/i, '')}` : `Section ${pNum}`,
-            title: isDrawing ? `Drawing Sheet ${pNum} (${originalName})` : `Spec Section ${pNum} (${originalName})`,
-            text: '',
-            extractionStatus: 'empty',
-          });
-        }
-      }
+      const { pageCount, pages } = await extractPdfPages(file.buffer, originalName, isDrawing);
 
       const doc: ProjectDocument = {
         id: 'doc-' + Date.now() + '-' + Math.random().toString(36).substring(2, 7),
@@ -394,13 +230,18 @@ const handleDocumentUpload = async (req: express.Request, res: express.Response)
         category,
         fileSize: file.size,
         uploadedAt: new Date().toISOString(),
-        pageCount: Math.max(pageCount, pages.length),
+        pageCount,
         pages,
         status: 'ready',
       };
 
       project.documents.push(doc);
     }
+
+    const totalEmptyPages = project.documents
+      .flatMap((d) => d.pages)
+      .filter((p) => p.extractionStatus === 'empty').length;
+    project.unreadablePages = totalEmptyPages;
 
     project.processingSteps[0].status = 'completed';
     project.processingSteps[0].details = `${project.documents.length} document(s) uploaded`;
@@ -447,6 +288,63 @@ function quoteExistsOnPage(quote: unknown, page?: DocumentPage): boolean {
   if (!page || typeof quote !== 'string') return false;
   const q = norm(quote);
   return q.length >= 15 && norm(page.text).includes(q); // quote fupi mno si ushahidi
+}
+
+// Quote relocation: when quote is not on cited page, search other pages in same document.
+// If exactly one page contains it, correct pageNumber to that page and keep finding.
+// Reject only when the quote is found nowhere.
+function checkAndRelocateQuote(
+  doc: ProjectDocument | undefined,
+  source: { pageNumber?: unknown; relevantText?: unknown; documentName?: unknown } | undefined,
+  docTypeLabel: 'Specification' | 'Drawing'
+): { ok: boolean; pageNumber?: number; reason?: string } {
+  if (!doc) {
+    return {
+      ok: false,
+      reason: `${docTypeLabel} document '${source?.documentName || 'unknown'}' was not found in project`,
+    };
+  }
+
+  const quote = source?.relevantText;
+  if (typeof quote !== 'string' || norm(quote).length < 15) {
+    return {
+      ok: false,
+      reason: `${docTypeLabel} evidence quote is missing or too short (< 15 characters)`,
+    };
+  }
+
+  const citedPage = findPage(doc, source?.pageNumber);
+  if (quoteExistsOnPage(quote, citedPage)) {
+    return {
+      ok: true,
+      pageNumber: citedPage!.pageNumber,
+    };
+  }
+
+  // Quote not found on cited page. Search other pages of the same document.
+  const matchingPages = doc.pages.filter((p) => quoteExistsOnPage(quote, p));
+
+  if (matchingPages.length === 1) {
+    // Exactly one page contains it: correct pageNumber to that page and keep finding
+    return {
+      ok: true,
+      pageNumber: matchingPages[0].pageNumber,
+    };
+  }
+
+  if (matchingPages.length > 1) {
+    // Found in document on multiple pages; relocate to first matching page
+    return {
+      ok: true,
+      pageNumber: matchingPages[0].pageNumber,
+    };
+  }
+
+  // Quote found nowhere in the document
+  return {
+    ok: false,
+    reason: `${docTypeLabel} quote not found on cited page ${source?.pageNumber || 'N/A'} or any other page in '${doc.name}'`,
+  };
 }
 
 // 7. Run Cross-Check AI Analysis on Project (handles both /analyze and /cross-check)
@@ -499,11 +397,15 @@ const handleAnalyzeProject = async (req: express.Request, res: express.Response)
   project.processingSteps[4].status = 'in_progress';
 
   try {
-    const readable = (d: ProjectDocument) => d.pages.filter((p) => p.extractionStatus === 'ok');
+    const readable = (d: ProjectDocument) =>
+      d.pages.filter((p) => p.extractionStatus === 'ok');
 
-    const unreadable = [...drawings, ...specs].flatMap((d) =>
-      d.pages.filter((p) => p.extractionStatus === 'empty').map((p) => `${d.name} p.${p.pageNumber}`)
-    );
+    const unreadablePages = project.documents
+      .flatMap((d) => d.pages)
+      .filter((p) => p.extractionStatus === 'empty').length;
+
+    const pagesSentSpec = specs.reduce((acc, s) => acc + readable(s).length, 0);
+    const pagesSentDrawings = drawings.reduce((acc, d) => acc + readable(d).length, 0);
 
     // Prepare document text context using only readable pages
     const specSummaries = specs.map(s => {
@@ -625,24 +527,68 @@ ${drawingSummaries}
     });
 
     const parsedFindings = JSON.parse(response.text || '[]');
+    const candidatesFromModel = parsedFindings.length;
 
-    const rejected: string[] = [];
-    const verified = parsedFindings.filter((f: any) => {
+    const rejected: Array<{ title: string; reason: string }> = [];
+    const verified: any[] = [];
+
+    for (const f of parsedFindings) {
+      const candidateTitle = f?.title || 'Untitled scope discrepancy';
+
+      if (!ALLOWED_TYPES.includes(f?.type)) {
+        rejected.push({
+          title: candidateTitle,
+          reason: `Invalid finding category '${f?.type || 'missing'}'`,
+        });
+        continue;
+      }
+
       const docA = specs.find((s) => s.name === f?.sourceA?.documentName);
+      if (!docA) {
+        rejected.push({
+          title: candidateTitle,
+          reason: `Specification document '${f?.sourceA?.documentName || 'N/A'}' was not found in project`,
+        });
+        continue;
+      }
+
       const docB = drawings.find((d) => d.name === f?.sourceB?.documentName);
-      const okA = quoteExistsOnPage(f?.sourceA?.relevantText, findPage(docA, f?.sourceA?.pageNumber));
-      const okB = quoteExistsOnPage(f?.sourceB?.relevantText, findPage(docB, f?.sourceB?.pageNumber));
-      const okType = ALLOWED_TYPES.includes(f?.type);
-      const ok = okA && okB && okType;
-      if (!ok) rejected.push(f?.title ?? 'untitled');
-      return ok;
-    });
+      if (!docB) {
+        rejected.push({
+          title: candidateTitle,
+          reason: `Drawing document '${f?.sourceB?.documentName || 'N/A'}' was not found in project`,
+        });
+        continue;
+      }
+
+      const checkA = checkAndRelocateQuote(docA, f?.sourceA, 'Specification');
+      if (!checkA.ok) {
+        rejected.push({
+          title: candidateTitle,
+          reason: checkA.reason || 'Specification quote could not be verified in document',
+        });
+        continue;
+      }
+      f.sourceA.pageNumber = checkA.pageNumber;
+
+      const checkB = checkAndRelocateQuote(docB, f?.sourceB, 'Drawing');
+      if (!checkB.ok) {
+        rejected.push({
+          title: candidateTitle,
+          reason: checkB.reason || 'Drawing quote could not be verified in document',
+        });
+        continue;
+      }
+      f.sourceB.pageNumber = checkB.pageNumber;
+
+      verified.push(f);
+    }
 
     const newFindings: Finding[] = verified.map((f: any, idx: number) => {
       const docA = specs.find((s) => s.name === f.sourceA.documentName)!;
       const docB = drawings.find((d) => d.name === f.sourceB.documentName)!;
-      const pageA = findPage(docA, f.sourceA.pageNumber)!;
-      const pageB = findPage(docB, f.sourceB.pageNumber)!;
+      const pageA = findPage(docA, f.sourceA.pageNumber) || docA.pages.find((p) => p.pageNumber === f.sourceA.pageNumber) || docA.pages[0];
+      const pageB = findPage(docB, f.sourceB.pageNumber) || docB.pages.find((p) => p.pageNumber === f.sourceB.pageNumber) || docB.pages[0];
       return {
         id: `finding-${Date.now()}-${idx}`,
         projectId: project.id,
@@ -657,7 +603,7 @@ ${drawingSummaries}
           type: 'specification',
           documentName: docA.name,
           documentId: docA.id,
-          sectionNumber: f.sourceA.sectionNumber ?? null,
+          sectionNumber: f.sourceA.sectionNumber ?? pageA.sheetOrSection ?? null,
           pageNumber: pageA.pageNumber,
           location: f.sourceA.location ?? null,
           relevantText: f.sourceA.relevantText,
@@ -668,7 +614,7 @@ ${drawingSummaries}
           type: 'drawing',
           documentName: docB.name,
           documentId: docB.id,
-          sheetNumber: f.sourceB.sheetNumber ?? null,
+          sheetNumber: f.sourceB.sheetNumber ?? pageB.sheetOrSection ?? null,
           pageNumber: pageB.pageNumber,
           location: f.sourceB.location ?? null,
           relevantText: f.sourceB.relevantText,
@@ -679,14 +625,28 @@ ${drawingSummaries}
       };
     });
 
+    // Record diagnostics on project
+    project.pagesSentSpec = pagesSentSpec;
+    project.pagesSentDrawings = pagesSentDrawings;
+    project.unreadablePages = unreadablePages;
+    project.candidatesFromModel = candidatesFromModel;
+    project.rejected = rejected;
+
     project.findings = newFindings;
     project.status = 'ready';
     project.processingSteps[2].status = 'completed';
-    project.processingSteps[2].details = `${drawings.length} drawing sheets verified`;
+    project.processingSteps[2].details = `${drawings.length} drawing sheets verified (${pagesSentDrawings} readable pages)`;
     project.processingSteps[3].status = 'completed';
-    project.processingSteps[3].details = `${specs.length} specification packages indexed`;
+    project.processingSteps[3].details = `${specs.length} specification packages indexed (${pagesSentSpec} readable pages)`;
     project.processingSteps[4].status = 'completed';
-    project.processingSteps[4].details = `${newFindings.length} scope findings identified for estimator review`;
+    project.processingSteps[4].details =
+      newFindings.length > 0
+        ? `${newFindings.length} scope findings identified for estimator review`
+        : candidatesFromModel === 0 && unreadablePages === 0
+        ? 'No discrepancies detected'
+        : rejected.length > 0
+        ? `Inconclusive: ${rejected.length} candidates could not be verified`
+        : `Partial check: ${unreadablePages} pages could not be read`;
 
     res.json({
       message: 'Analysis completed successfully',
@@ -1190,7 +1150,7 @@ export async function startServer() {
   if (process.env.NODE_ENV !== 'production') {
     const { createServer: createViteServer } = await import('vite');
     const vite = await createViteServer({
-      server: { middlewareMode: true },
+      server: { middlewareMode: true, hmr: false },
       appType: 'spa',
     });
     app.use(vite.middlewares);

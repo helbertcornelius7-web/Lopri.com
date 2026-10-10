@@ -70,6 +70,11 @@ export interface ProcessingStep {
   details?: string;
 }
 
+export interface RejectedCandidate {
+  title: string;
+  reason: string;
+}
+
 export interface Project {
   id: string;
   name: string;
@@ -78,6 +83,11 @@ export interface Project {
   processingSteps: ProcessingStep[];
   documents: ProjectDocument[];
   findings: Finding[];
+  pagesSentSpec?: number;
+  pagesSentDrawings?: number;
+  unreadablePages?: number;
+  candidatesFromModel?: number;
+  rejected?: RejectedCandidate[];
 }
 
 export interface ChatMessage {

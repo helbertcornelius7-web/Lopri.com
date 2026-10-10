@@ -227,7 +227,7 @@ export const apiClient = {
 
       if (res.ok) {
         const data = await res.json();
-        if (data.project && data.project.findings && data.project.findings.length > 0) {
+        if (data.project) {
           saveLocalProject(data.project);
           return data.project;
         }
@@ -255,6 +255,11 @@ export const apiClient = {
 
     const generatedFindings = runClientSideCrossCheck(current);
     current.findings = generatedFindings;
+    current.pagesSentSpec = current.pagesSentSpec ?? current.documents.filter((d) => d.category === 'specification').reduce((acc, d) => acc + d.pages.length, 0);
+    current.pagesSentDrawings = current.pagesSentDrawings ?? current.documents.filter((d) => d.category === 'drawing').reduce((acc, d) => acc + d.pages.length, 0);
+    current.unreadablePages = current.unreadablePages ?? 0;
+    current.candidatesFromModel = current.candidatesFromModel ?? generatedFindings.length;
+    current.rejected = current.rejected ?? [];
     current.status = 'ready';
 
     current.processingSteps[2].status = 'completed';

@@ -18,6 +18,27 @@
         y=l.getElementsByTagName(r)[0];y.parentNode.insertBefore(t,y);
       })(window, document, "clarity", "script", "ymnb7ce5ld");
     </script>
+    <!-- Ignore WebSocket / @vite/client errors per AI Studio environment constraints -->
+    <script>
+      (function() {
+        function isWsError(msg) {
+          return msg && (msg.includes('WebSocket') || msg.includes('@vite/client') || msg.includes('vite:ws'));
+        }
+        window.addEventListener('unhandledrejection', function(event) {
+          var reason = event.reason;
+          var msg = (reason && (reason.message || reason.stack || String(reason))) || '';
+          if (isWsError(msg)) {
+            event.preventDefault();
+          }
+        });
+        window.addEventListener('error', function(event) {
+          var msg = (event.message || '') + ' ' + (event.filename || '');
+          if (isWsError(msg)) {
+            event.preventDefault();
+          }
+        });
+      })();
+    </script>
   </head>
   <body>
     <div id="root"></div>

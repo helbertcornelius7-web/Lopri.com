@@ -12,6 +12,11 @@ export const SAMPLE_PROJECT: Project = {
     { id: '4', label: 'Specifications indexed', status: 'completed', details: 'Division 26 24 16, 26 28 16 indexed' },
     { id: '5', label: 'Drawing + specification cross-check', status: 'completed', details: '3 scope discrepancies identified for estimator review' },
   ],
+  pagesSentSpec: 3,
+  pagesSentDrawings: 2,
+  unreadablePages: 0,
+  candidatesFromModel: 3,
+  rejected: [],
   documents: [
     {
       id: 'doc-sample-dwg-1',
